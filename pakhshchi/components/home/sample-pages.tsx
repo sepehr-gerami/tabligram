@@ -13,7 +13,7 @@ import { PageDetailDialog } from "@/components/shared/page-detail-dialog";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { CategoryId, InstaPage } from "@/types";
-
+import { CategoryFilter } from "@/components/shared/category-filter";
 /**
  * Public page directory. Reads from the Store, so a page approved by the admin
  * (and stories/stats edited by its owner) shows up here without a rebuild.
@@ -32,15 +32,12 @@ export function SamplePages() {
       <div className="mx-auto max-w-7xl space-y-8 px-4 py-16">
         <SectionHeading title="پیج‌های تبلیغاتی" description="فقط پیج‌های تأییدشده نمایش داده می‌شوند. آمار هر پیج را صاحب آن وارد کرده و توسط اینستاگرام تأیید نشده است." />
 
-        <div role="group" aria-label="فیلتر دسته‌بندی" className="flex flex-wrap gap-2">
-          {chips.map((c) => (
-            <button key={c.value} type="button" aria-pressed={cat === c.value} onClick={() => setCat(c.value)}
-              className="relative h-10 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition-colors hover:border-brand-200 hover:text-brand-700 aria-pressed:border-transparent aria-pressed:text-white">
-              {cat === c.value && <motion.span layoutId="chip-active" className="absolute inset-0 rounded-full bg-brand-600" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
-              <span className="relative">{c.label}</span>
-            </button>
-          ))}
-        </div>
+
+        <CategoryFilter
+          categories={chips}
+          value={cat}
+          onChange={(value) => setCat(value as CategoryId | "all")}
+        />
 
         <p aria-live="polite" className="text-sm text-slate-500">
           {ready ? `${list.length} پیج در این دسته` : "در حال بارگذاری…"}

@@ -33,9 +33,16 @@ export function PagesTable() {
       <div className="flex flex-wrap items-center gap-3">
         <label htmlFor="page-filter" className="text-sm text-slate-600">وضعیت تأیید</label>
         <div className="w-48">
-          <Select id="page-filter" value={filter} onChange={(e) => setFilter(e.target.value as ApprovalStatus | "all")}>
-            <option value="all">همه</option>
-            {(Object.keys(APPROVAL_STATUS) as ApprovalStatus[]).map((k) => <option key={k} value={k}>{APPROVAL_STATUS[k].label}</option>)}
+          <Select
+            name="category"
+            defaultValue=""
+            placeholder="دسته‌بندی را انتخاب کنید"
+            onValueChange={(value) => console.log(value)}
+          >
+            <option value="">انتخاب دسته‌بندی</option>
+            <option value="design">طراحی</option>
+            <option value="programming">برنامه‌نویسی</option>
+            <option value="marketing">بازاریابی</option>
           </Select>
         </div>
         <p aria-live="polite" className="text-sm text-slate-500">{formatNumber(list.length)} پیج</p>
