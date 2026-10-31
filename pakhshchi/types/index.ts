@@ -9,10 +9,32 @@ export type OfferStatus = "new" | "accepted" | "rejected";
 export type PublishStatus = "awaiting" | "published" | "failed";
 export type StoryStatus = "active" | "expired" | "disabled";
 
+/** دو منبع آمار: «تأییدشده» (Instagram Graph API) یا «خوداظهاری» (صاحب پیج). */
+export type StatsSource = "verified" | "self";
+/** روش تأیید مالکیت پیج. */
+export type VerificationMethod = "graph" | "bio-code" | "story-code";
+/** چرخهٔ تأیید مالکیت. */
+export type VerificationStatus = "unverified" | "awaiting" | "verified";
+/** وضعیت وجه قفل‌شدهٔ سفارش (Escrow). */
+export type EscrowStatus = "unpaid" | "held" | "released" | "refunded";
+
 export interface Assignment {
   pageId: string;
   status: PublishStatus;
   proofUrl: string;
+  /** وجه این انتشار؛ پس از تأیید مدرک آزاد می‌شود. */
+  escrow: EscrowInfo;
+}
+
+/** وضعیت وجه قفل‌شدهٔ هر تخصیص (Escrow). */
+export interface EscrowInfo {
+  status: EscrowStatus;
+  /** مبلغ قفل‌شده (تومان). */
+  amount: number;
+  heldAt: string | null;
+  releasedAt: string | null;
+  /** توضیح آخرین تغییر (مثلاً دلیل ریفاند). */
+  note: string;
 }
 
 export interface Campaign {
@@ -67,6 +89,20 @@ export interface InstaPage {
    * Not a security control — ownership checks must use ownerId (and a backend later).
    */
   owned: boolean;
+  /** تأیید مالکیت پیج (Graph API یا کد بیو). */
+  verification: PageVerification;
+  /** منبع آمار: خوداظهاری یا تأییدشده از اینستاگرام. */
+  statsSource: StatsSource;
+}
+
+/** اطلاعات تأیید مالکیت؛ در lib/verification.ts مدیریت می‌شود. */
+export interface PageVerification {
+  status: VerificationStatus;
+  method: VerificationMethod | null;
+  code: string | null;
+  codeExpiresAt: string | null;
+  verifiedAt: string | null;
+  note: string;
 }
 
 export interface Story {

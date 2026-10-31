@@ -16,6 +16,7 @@ import { ownedPages } from "@/lib/pages";
 import { useStore } from "@/lib/store";
 import { cn, formatNumber, formatToman, makeId, normalizeHandle, parseAmount, toLatinDigits } from "@/lib/utils";
 import { validateAvatar, validatePage, type Errors, type PageField, type PageValues } from "@/lib/validation";
+import { emptyVerification } from "@/lib/verification";
 import type { CategoryId, InstaPage, PublishType } from "@/types";
 
 const EMPTY: PageValues = {
@@ -112,7 +113,7 @@ export function PageForm() {
       },
       publishTypes: values.publishTypes,
       approval: "pending", rejectReason: "", ownerId: DEMO_USER_ID, createdAt: new Date().toISOString(),
-      avatarUrl, owned: true,
+      avatarUrl, owned: true, verification: emptyVerification(), statsSource: "self",
     };
     const ok = addPage(page);
     setSubmitting(false);

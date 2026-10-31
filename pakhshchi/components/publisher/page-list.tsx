@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { PageAvatar, pageTitle, StatsSourceNote } from "@/components/shared/page-card";
+import { VerificationCard } from "@/components/publisher/verification-card";
 import { APPROVAL_STATUS, typeLabel } from "@/lib/constants";
 import { categoryLabel } from "@/lib/categories";
 import { ownedPages } from "@/lib/pages";
@@ -69,7 +70,8 @@ export function PageList() {
                     </p>
                   )}
 
-                  <StatsSourceNote />
+                  <StatsSourceNote page={p} />
+                  <VerificationCard page={p} />
 
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => setEditing(p)}><Pencil />ویرایش اطلاعات</Button>

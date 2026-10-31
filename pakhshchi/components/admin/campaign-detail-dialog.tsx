@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ExternalLink, Plus, Save, Trash2 } from "lucide-react";
+import { ExternalLink, Landmark, Plus, Save, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,10 +14,17 @@ import { categoryLabel } from "@/lib/categories";
 import { useStore } from "@/lib/store";
 import { formatDate, formatNumber, formatToman, isHttpUrl, ltr } from "@/lib/utils";
 import { priceSummary } from "@/lib/pages";
-import type { Assignment, CampaignStatus, InstaPage, PublishStatus } from "@/types";
+import type { Assignment, CampaignStatus, EscrowInfo, EscrowStatus, InstaPage, PublishStatus } from "@/types";
+
+const ESCROW_META: Record<EscrowStatus, { label: string; tone: "neutral" | "info" | "success" | "warning" | "danger" }> = {
+  unpaid: { label: "پرداخت نشده", tone: "neutral" },
+  held: { label: "در امانت (قفل‌شده)", tone: "warning" },
+  released: { label: "آزاد شد", tone: "success" },
+  refunded: { label: "برگشت خورد", tone: "danger" },
+};
 
 export function CampaignDetailDialog({ campaignId, onClose }: { campaignId: string | null; onClose: () => void }) {
-  const { campaigns, pages, setCampaignStatus, assignPage, unassignPage, updateAssignment } = useStore();
+  const { campaigns, pages, setCampaignStatus, assignPage, unassignPage, updateAssignment, releaseEscrow, refundEscrow } = useStore();
   const toast = useToast();
   const campaign = campaigns.find((c) => c.id === campaignId) ?? null;
 
@@ -87,6 +94,8 @@ export function CampaignDetailDialog({ campaignId, onClose }: { campaignId: stri
                       <AssignmentRow key={a.pageId} a={a} page={page}
                         onStatus={(s) => { updateAssignment(campaign.id, a.pageId, { status: s }); toast({ tone: "success", title: "وضعیت انتشار تغییر کرد", description: `${ltr(page.handle)} · ${PUBLISH_STATUS[s].label}` }); }}
                         onProof={(url) => { updateAssignment(campaign.id, a.pageId, { proofUrl: url }); toast({ tone: "success", title: "لینک مدرک ثبت شد", description: ltr(page.handle) }); }}
+                        onRelease={() => { releaseEscrow(campaign.id, a.pageId); toast({ tone: "success", title: "وجه آزاد شد", description: `${ltr(page.handle)} · وجه از امانت آزاد شد` }); }}
+                        onRefund={() => { refundEscrow(campaign.id, a.pageId); toast({ tone: "info", title: "وجه برگشت داده شد", description: ltr(page.handle) }); }}
                         onRemove={() => { unassignPage(campaign.id, a.pageId); toast({ tone: "info", title: "پیج از کمپین حذف شد", description: ltr(page.handle) }); }} />
                     );
                   })}
@@ -121,8 +130,10 @@ export function CampaignDetailDialog({ campaignId, onClose }: { campaignId: stri
   );
 }
 
-function AssignmentRow({ a, page, onStatus, onProof, onRemove }: {
-  a: Assignment; page: InstaPage; onStatus: (s: PublishStatus) => void; onProof: (url: string) => void; onRemove: () => void;
+function AssignmentRow({ a, page, onStatus, onProof, onRelease, onRefund, onRemove }: {
+  a: Assignment; page: InstaPage;
+  onStatus: (s: PublishStatus) => void; onProof: (url: string) => void;
+  onRelease: () => void; onRefund: () => void; onRemove: () => void;
 }) {
   const [proof, setProof] = useState(a.proofUrl);
   const [error, setError] = useState<string>();
@@ -155,7 +166,27 @@ function AssignmentRow({ a, page, onStatus, onProof, onRemove }: {
           </div>
         </Field>
       </div>
+      <EscrowBox escrow={a.escrow} onRelease={onRelease} onRefund={onRefund} />
       {a.proofUrl && <a href={a.proofUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:underline"><ExternalLink aria-hidden className="size-3.5" />مشاهدهٔ مدرک ثبت‌شده</a>}
     </li>
+  );
+}
+
+/** Escrow panel: shows the held amount and lets the admin release/refund after checking the proof. */
+function EscrowBox({ escrow, onRelease, onRefund }: { escrow: EscrowInfo; onRelease: () => void; onRefund: () => void }) {
+  const meta = ESCROW_META[escrow.status];
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl bg-mist p-3 text-sm">
+      <Landmark aria-hidden className="size-4 text-slate-500" />
+      <span className="font-medium">وجه: {escrow.amount > 0 ? formatToman(escrow.amount) : "—"}</span>
+      <Badge tone={meta.tone}>{meta.label}</Badge>
+      {escrow.note && <span className="text-xs text-slate-500">{escrow.note}</span>}
+      {escrow.status === "held" && (
+        <span className="ms-auto flex gap-2">
+          <Button size="sm" variant="outline" onClick={onRelease}>آزادسازی وجه</Button>
+          <Button size="sm" variant="ghost" className="text-red-600" onClick={onRefund}>برگشت وجه</Button>
+        </span>
+      )}
+    </div>
   );
 }

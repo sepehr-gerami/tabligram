@@ -1,5 +1,6 @@
 import { DEMO_USER_ID } from "@/lib/identity";
-import type { InstaPage, PublishType, StoreState } from "@/types";
+import { emptyVerification } from "@/lib/verification";
+import type { Assignment, EscrowInfo, InstaPage, PublishType, StoreState } from "@/types";
 
 const ig = (h: string) => `https://instagram.com/${h}`;
 
@@ -11,6 +12,14 @@ interface SeedPage {
   bio?: string; mine?: boolean;
 }
 
+/** Escrow helper for seeds: a share of the campaign budget held per assignment. */
+const escrow = (amount: number, status: EscrowInfo["status"] = "held"): EscrowInfo =>
+  ({ status, amount, heldAt: status === "held" ? "2026-10-20T09:00:00Z" : null,
+    releasedAt: status === "released" ? "2026-10-23T09:00:00Z" : null, note: "" });
+
+const seedAssignment = (pageId: string, status: Assignment["status"], proofUrl = "", amount: number): Assignment =>
+  ({ pageId, status, proofUrl, escrow: escrow(amount, status === "published" ? "released" : "held") });
+
 const seedPage = (s: SeedPage): InstaPage => {
   const prices: Record<PublishType, number> = { story: s.story, post: s.post, reels: s.reels };
   return {
@@ -19,6 +28,7 @@ const seedPage = (s: SeedPage): InstaPage => {
     prices, publishTypes: (["story", "post", "reels"] as PublishType[]).filter((t) => prices[t] > 0),
     approval: s.approval, rejectReason: "", ownerId: s.mine ? DEMO_USER_ID : null, createdAt: "2026-10-01T09:00:00Z",
     avatarUrl: null, owned: !!s.mine,
+    verification: emptyVerification(), statsSource: "self",
   };
 };
 
@@ -36,12 +46,12 @@ export const initialState: StoreState = {
   ],
   campaigns: [
     { id: "c1", orderNumber: "PK-100231", title: "کلکسیون پاییزه کت و پالتو", business: "مزون آرمان", description: "کلکسیون جدید کت و پالتوی زنانه با ارسال رایگان به سراسر کشور.", link: "https://example.com/armaan", mediaName: "autumn.jpg", mediaKind: "image", budget: 6000000, count: 6, publishType: "story", category: "fashion", region: "تهران", notes: "", status: "running", createdAt: "2026-10-22T09:30:00Z", mine: false, selectedPageId: null,
-      assignments: [{ pageId: "p1", status: "published", proofUrl: "https://example.com/proof/1" }, { pageId: "p2", status: "awaiting", proofUrl: "" }] },
+      assignments: [seedAssignment("p1", "published", "https://example.com/proof/1", 1_000_000), seedAssignment("p2", "awaiting", "", 1_000_000)] },
     { id: "c2", orderNumber: "PK-100232", title: "منوی جدید صبحانه", business: "کافه نیلوفر", description: "معرفی منوی صبحانهٔ تازه با تخفیف هفتهٔ اول.", link: "@cafe_niloofar", mediaName: "breakfast.mp4", mediaKind: "video", budget: 4500000, count: 3, publishType: "reels", category: "food", region: "", notes: "ترجیحاً ساعات صبح منتشر شود.", status: "pending", createdAt: "2026-10-26T14:10:00Z", mine: false, selectedPageId: null, assignments: [] },
     { id: "c3", orderNumber: "PK-100233", title: "فروش ویژه هدفون بی‌سیم", business: "دیجی‌گجت", description: "هدفون بی‌سیم با ۱۸ ماه گارانتی و ارسال سریع.", link: "https://example.com/digigadget", mediaName: "headphone.png", mediaKind: "image", budget: 8000000, count: 5, publishType: "post", category: "tech", region: "", notes: "", status: "running", createdAt: "2026-10-20T11:00:00Z", mine: false, selectedPageId: null,
-      assignments: [{ pageId: "p3", status: "published", proofUrl: "https://example.com/proof/3" }, { pageId: "p4", status: "awaiting", proofUrl: "" }] },
+      assignments: [seedAssignment("p3", "published", "https://example.com/proof/3", 1_600_000), seedAssignment("p4", "awaiting", "", 1_600_000)] },
     { id: "c4", orderNumber: "PK-100234", title: "پکیج مراقبت پوست", business: "کلینیک درما", description: "پکیج سه‌جلسه‌ای مراقبت پوست با مشاورهٔ رایگان.", link: "https://example.com/derma", mediaName: "skin.jpg", mediaKind: "image", budget: 3200000, count: 4, publishType: "story", category: "beauty", region: "مشهد", notes: "", status: "completed", createdAt: "2026-10-12T08:45:00Z", mine: false, selectedPageId: null,
-      assignments: [{ pageId: "p5", status: "published", proofUrl: "https://example.com/proof/5" }] },
+      assignments: [seedAssignment("p5", "published", "https://example.com/proof/5", 800_000)] },
     { id: "c5", orderNumber: "PK-100235", title: "تور دو روزه شمال", business: "آژانس مسیر سبز", description: "تور دو روزه با اقامت در ویلا و صبحانهٔ محلی.", link: "https://example.com/sabz", mediaName: "north.jpg", mediaKind: "image", budget: 5500000, count: 2, publishType: "post", category: "travel", region: "گیلان", notes: "", status: "rejected", createdAt: "2026-10-15T16:20:00Z", mine: false, selectedPageId: null, assignments: [] },
   ],
   offers: [

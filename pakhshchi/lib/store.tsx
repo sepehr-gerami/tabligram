@@ -5,8 +5,12 @@ import { initialState } from "@/lib/data";
 import { categoryLabel, MAX_PAGES_PER_OWNER } from "@/lib/constants";
 import { DEMO_USER_ID, isDemoOwner } from "@/lib/identity";
 import { storyExpiry } from "@/lib/pages";
+import {
+  confirmVerification, emptyVerification, migrateVerification,
+  startVerification as startVerif,
+} from "@/lib/verification";
 import type {
-  ApprovalStatus, Assignment, Campaign, CampaignStatus, InstaPage, OfferStatus, Story, StoreState,
+  ApprovalStatus, Assignment, Campaign, CampaignStatus, EscrowStatus, InstaPage, OfferStatus, Story, StoreState, VerificationMethod,
 } from "@/types";
 
 /** v2 added page stats/tariffs/ownership and stories; v1 data is migrated on read. */
@@ -25,6 +29,11 @@ type Action =
   | { type: "updatePage"; id: string; patch: PagePatch }
   | { type: "removePage"; id: string }
   | { type: "setApproval"; id: string; approval: ApprovalStatus; reason?: string }
+  | { type: "startVerification"; id: string; method: VerificationMethod }
+  | { type: "confirmVerification"; id: string }
+  | { type: "cancelVerification"; id: string }
+  | { type: "releaseEscrow"; campaignId: string; pageId: string }
+  | { type: "refundEscrow"; campaignId: string; pageId: string; note?: string }
   | { type: "setOfferStatus"; id: string; status: OfferStatus }
   | { type: "assignPage"; campaignId: string; pageId: string; deadline: string }
   | { type: "unassignPage"; campaignId: string; pageId: string }
@@ -37,6 +46,16 @@ const mapCampaign = (s: StoreState, id: string, fn: (c: Campaign) => Campaign): 
   ...s,
   campaigns: s.campaigns.map((c) => (c.id === id ? fn(c) : c)),
 });
+
+/** تغییر وضعیت وجه Escrow یک تخصیص؛ فقط از وضعیت «held» ممکن است. */
+function setEscrow(state: StoreState, campaignId: string, pageId: string, status: EscrowStatus, note: string): StoreState {
+  return mapCampaign(state, campaignId, (c) => ({
+    ...c,
+    assignments: c.assignments.map((x) => (x.pageId === pageId && x.escrow.status === "held"
+      ? { ...x, escrow: { ...x.escrow, status, note, releasedAt: new Date().toISOString() } }
+      : x)),
+  }));
+}
 
 function reducer(state: StoreState, a: Action): StoreState {
   switch (a.type) {
@@ -61,9 +80,37 @@ function reducer(state: StoreState, a: Action): StoreState {
         pages: state.pages.map((p) => {
           // Ownership check inside the reducer: a page that is not the demo owner's is never patched.
           if (p.id !== a.id || !(isDemoOwner(p.ownerId) || p.owned)) return p;
-          return { ...p, ...a.patch, approval: "pending", rejectReason: "" };
+          // Changing handle/URL invalidates a previous ownership verification.
+          const identityChanged =
+            (a.patch.handle !== undefined && a.patch.handle !== p.handle) ||
+            (a.patch.url !== undefined && a.patch.url !== p.url);
+          return {
+            ...p, ...a.patch, approval: "pending", rejectReason: "",
+            verification: identityChanged ? emptyVerification() : p.verification,
+          };
         }),
       };
+    case "startVerification":
+      return {
+        ...state,
+        pages: state.pages.map((p) => (p.id === a.id
+          ? { ...p, verification: startVerif(p.verification, p.handle, a.method) }
+          : p)),
+      };
+    case "confirmVerification":
+      return {
+        ...state,
+        pages: state.pages.map((p) => (p.id === a.id ? { ...p, verification: confirmVerification(p.verification) } : p)),
+      };
+    case "cancelVerification":
+      return {
+        ...state,
+        pages: state.pages.map((p) => (p.id === a.id ? { ...p, verification: emptyVerification() } : p)),
+      };
+    case "releaseEscrow":
+      return setEscrow(state, a.campaignId, a.pageId, "released", "وجه پس از تأیید مدرک انتشار آزاد شد.");
+    case "refundEscrow":
+      return setEscrow(state, a.campaignId, a.pageId, "refunded", a.note ?? "وجه به آگهی‌دهنده برگردانده شد.");
     case "removePage":
       return {
         ...state,
@@ -97,7 +144,10 @@ function reducer(state: StoreState, a: Action): StoreState {
       if (!campaign || !page || campaign.assignments.some((x) => x.pageId === a.pageId)) return state;
       const next = mapCampaign(state, a.campaignId, (c) => ({
         ...c,
-        assignments: [...c.assignments, { pageId: a.pageId, status: "awaiting", proofUrl: "" }],
+        assignments: [...c.assignments, {
+          pageId: a.pageId, status: "awaiting", proofUrl: "",
+          escrow: { status: "held", amount: Math.round(campaign.budget / Math.max(campaign.count, 1)), heldAt: new Date().toISOString(), releasedAt: null, note: "" },
+        }],
       }));
       if (!page.owned) return next;
       return {
@@ -155,6 +205,11 @@ interface StoreApi extends StoreState {
   assignPage: (campaignId: string, pageId: string) => void;
   unassignPage: (campaignId: string, pageId: string) => void;
   updateAssignment: (campaignId: string, pageId: string, patch: Partial<Pick<Assignment, "status" | "proofUrl">>) => void;
+  startVerification: (id: string, method: VerificationMethod) => void;
+  confirmVerification: (id: string) => void;
+  cancelVerification: (id: string) => void;
+  releaseEscrow: (campaignId: string, pageId: string) => void;
+  refundEscrow: (campaignId: string, pageId: string, note?: string) => void;
   reset: () => void;
 }
 
@@ -188,9 +243,18 @@ function migrate(raw: StoreState): StoreState {
       createdAt: legacy.createdAt ?? new Date().toISOString(),
       avatarUrl: null,
       owned: !!legacy.owned,
+      verification: migrateVerification((legacy as Partial<InstaPage>).verification),
+      statsSource: (legacy as Partial<InstaPage>).statsSource ?? "self",
     };
   });
-  const campaigns = raw.campaigns.map((c) => ({ ...c, selectedPageId: c.selectedPageId ?? null }));
+  const campaigns = raw.campaigns.map((c) => ({
+    ...c,
+    selectedPageId: c.selectedPageId ?? null,
+    assignments: c.assignments.map((x) => ({
+      ...x,
+      escrow: x.escrow ?? { status: "unpaid", amount: 0, heldAt: null, releasedAt: null, note: "" },
+    })),
+  }));
   return { pages, campaigns, offers: raw.offers, stories: raw.stories ?? [] };
 }
 
@@ -259,6 +323,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "assignPage", campaignId, pageId, deadline: new Date(Date.now() + 7 * 864e5).toISOString() }),
     unassignPage: (campaignId, pageId) => dispatch({ type: "unassignPage", campaignId, pageId }),
     updateAssignment: (campaignId, pageId, patch) => dispatch({ type: "updateAssignment", campaignId, pageId, patch }),
+    startVerification: (id, method) => dispatch({ type: "startVerification", id, method }),
+    confirmVerification: (id) => dispatch({ type: "confirmVerification", id }),
+    cancelVerification: (id) => dispatch({ type: "cancelVerification", id }),
+    releaseEscrow: (campaignId, pageId) => dispatch({ type: "releaseEscrow", campaignId, pageId }),
+    refundEscrow: (campaignId, pageId, note) => dispatch({ type: "refundEscrow", campaignId, pageId, note }),
     reset: () => dispatch({ type: "reset" }),
   }), [state, ready]);
 

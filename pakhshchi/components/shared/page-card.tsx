@@ -26,8 +26,16 @@ export function PageAvatar({ page, size = 54 }: { page: InstaPage; size?: number
 
 export const pageTitle = (p: InstaPage) => p.title?.trim() || p.handle;
 
-/** "ثبت‌شده توسط صاحب پیج" — page stats are self-reported, not verified by Instagram. */
-export function StatsSourceNote({ className }: { className?: string }) {
+/** Shows whether the page stats are verified (ownership verified via Graph/bio) or self-reported. */
+export function StatsSourceNote({ page, className }: { page?: InstaPage; className?: string }) {
+  const verified = page ? (page.verification?.status === "verified" || page.statsSource === "verified") : false;
+  if (verified) {
+    return (
+      <p className={cn("text-[11px] leading-5 font-medium text-emerald-700", className)}>
+        آمار این پیج تأییدشده است (اتصال حساب اینستاگرام / کد بیو).
+      </p>
+    );
+  }
   return (
     <p className={cn("text-[11px] leading-5 text-slate-500", className)}>
       آمار «ثبت‌شده توسط صاحب پیج» است و توسط اینستاگرام تأیید نشده.
@@ -49,7 +57,10 @@ export function PageCard({ page, onSelect, selected = false, actionLabel }: {
           <p dir="ltr" className="truncate text-start text-xs text-slate-500">{page.handle}</p>
           <p className="text-xs text-slate-500">{categoryLabel(page.category)}{page.city ? ` · ${page.city}` : ""}</p>
         </div>
-        <Badge tone="success" className="ms-auto">تأییدشده</Badge>
+        <div className="ms-auto flex flex-col items-end gap-1">
+          <Badge tone="success">تأییدشده</Badge>
+          {page.statsSource === "verified" && <Badge tone="info">آمار تأییدشده</Badge>}
+        </div>
       </div>
 
       {page.bio && <p className="line-clamp-2 text-sm leading-6 text-slate-600">{page.bio}</p>}
@@ -63,7 +74,7 @@ export function PageCard({ page, onSelect, selected = false, actionLabel }: {
 
       <div className="flex flex-wrap gap-1.5">{page.publishTypes.map((t) => <Badge key={t} tone="info">{typeLabel(t)}</Badge>)}</div>
 
-      <StatsSourceNote className="mt-auto" />
+      <StatsSourceNote page={page} className="mt-auto" />
 
       {onSelect && (
         <button type="button" onClick={onSelect} aria-pressed={selected}
