@@ -6,8 +6,8 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 
 export const metadata: Metadata = {
-  title: { default: "پخش‌چی | یک تبلیغ، چندین پیج اینستاگرام", template: "%s | پخش‌چی" },
-  description: "پخش‌چی تبلیغ‌دهنده‌ها را به صاحبان پیج‌های اینستاگرام وصل می‌کند. نسخهٔ نمایشی رابط کاربری.",
+  title: { default: "تبلیگرام | یک تبلیغ، چندین پیج اینستاگرام", template: "%s | تبلیگرام" },
+  description: "تبلیگرام تبلیغ‌دهنده‌ها را به صاحبان پیج‌های اینستاگرام وصل می‌کند. نسخهٔ نمایشی رابط کاربری.",
 };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#2563eb" };
 

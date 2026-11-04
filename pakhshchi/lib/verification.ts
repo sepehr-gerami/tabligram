@@ -113,5 +113,5 @@ export function verifyGraphToken(state: VerificationState, token: string, handle
 export const methodLabel: Record<VerificationMethod, string> = {
   graph: "Graph API (اتصال حساب)",
   "bio-code": "کد در بیو",
-  "story-code": "کد در استوری",
+  "manual": "بررسی دستی",
 };

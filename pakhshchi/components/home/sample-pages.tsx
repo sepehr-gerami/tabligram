@@ -16,7 +16,7 @@ import type { CategoryId, InstaPage } from "@/types";
 import { CategoryFilter } from "@/components/shared/category-filter";
 /**
  * Public page directory. Reads from the Store, so a page approved by the admin
- * (and stories/stats edited by its owner) shows up here without a rebuild.
+ * (and profile details and statistics updated by its owner) shows up here without a rebuild.
  */
 export function SamplePages() {
   const { pages, ready } = useStore();

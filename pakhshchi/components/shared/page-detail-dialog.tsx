@@ -33,7 +33,7 @@ export function PageDetailDialog({ page, onClose, onSelect }: {
                   <DialogTitle className="truncate">{pageTitle(page)}</DialogTitle>
                   <DialogDescription dir="ltr" className="truncate text-start">{page.handle}</DialogDescription>
                 </div>
-                <Badge tone="success" className="ms-auto">تأییدشده</Badge>
+                {page.approval === "approved" && <Badge tone="success" className="ms-auto">تأیید مدیر</Badge>}
               </div>
             </DialogHeader>
 

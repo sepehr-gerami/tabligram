@@ -93,13 +93,6 @@ export function validateAvatar(file: File | null): string | undefined {
   if (file.size > MAX_AVATAR_MB * 1024 * 1024) return `حجم تصویر بیشتر از ${formatNumber(MAX_AVATAR_MB)} مگابایت است.`;
   return undefined;
 }
-export interface StoryValues { caption: string; media: File | null }
-export function validateStory(v: StoryValues): Errors<"caption"> {
-  const e: Errors<"caption"> = {};
-  if (v.caption.length > 120) e.caption = "متن استوری حداکثر ۱۲۰ حرف باشد.";
-  return e;
-}
-
 export interface AuthValues { name: string; mobile: string }
 export function validateAuth(v: AuthValues, needName: boolean): Errors<keyof AuthValues> {
   const e: Errors<keyof AuthValues> = {};

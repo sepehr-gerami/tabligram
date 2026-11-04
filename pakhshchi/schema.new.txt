@@ -1,0 +1,538 @@
+// تبلیگرام (Tabligram) — Schema کامل دیتابیس
+//
+// روند پول (مرحلهٔ اول: دستی):
+//  1) تبلیغ‌دهنده کارت‌به‌کارت به حساب پلتفرم واریز می‌کند و رسید ثبت می‌کند (Deposit).
+//  2) مدیر واریز را در بانک بررسی و تأیید می‌کند (VERIFIED).
+//  3) هر درخواست به یک پیج، بخشی از موجودی را بلوکه می‌کند (Hold).
+//  4) بعد از تأیید دوطرفه و گذشتن زمان حداقل ماندن پست، مدیر به صاحب پیج پرداخت می‌کند (PAID_OUT).
+// موجودی ذخیره نمی‌شود؛ همیشه محاسبه می‌شود:
+//   موجودی آزاد = جمع واریزهای تأییدشده − جمع بلوکه‌های غیر REFUNDED   (lib/money-rules.ts)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- کاربران و نقش‌ها ----------
+
+// نقش سیستمی. «تبلیغ‌کننده» و «صاحب پیج» نقش نیستند؛ قابلیت‌اند و از وجود
+// AdvertiserProfile / PublisherProfile مشتق می‌شوند (یک کاربر می‌تواند هر دو را داشته باشد).
+// ADMIN فقط از طریق seed یا ابزار داخلی ساخته می‌شود، هرگز از فرم ثبت‌نام.
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model User {
+  id            String     @id @default(cuid())
+  mobile        String     @unique // شماره موبایل، شناسه اصلی ورود
+  passwordHash  String
+  name          String
+  role          Role       @default(USER)
+  status        UserStatus @default(ACTIVE)
+  trustScore    Int        @default(50) // امتیاز اعتبار 0..100
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  advertiserProfile AdvertiserProfile?
+  publisherProfile  PublisherProfile?
+  pages             InstaPage[]
+  campaigns         Campaign[]
+  sessions          Session[]
+  notifications     Notification[]
+  deposits          Deposit[]
+  holds             Hold[]
+  reportsFiled      Report[]   @relation("Reporter")
+  reportsAgainst    Report[]   @relation("ReportedUser")
+  ratingsGiven      UserRating[] @relation("Rater")
+  ratingsReceived   UserRating[] @relation("Rated")
+  auditLogs         AuditLog[]
+  adminBanners      Banner[]   @relation("BannerAuthor")
+  adminActionReports Report[]  @relation("AdminResolver")
+
+  @@index([role])
+}
+
+model AdvertiserProfile {
+  id           String  @id @default(cuid())
+  userId       String  @unique
+  businessName String
+  website      String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// وضعیت بررسی هویت و کارت پرداخت صاحب پیج.
+enum PayoutVerification {
+  NONE      // هنوز اطلاعاتی ثبت نشده
+  PENDING   // ثبت شده، منتظر بررسی مدیر
+  VERIFIED  // مدیر تأیید کرد؛ فقط کارت تأییدشده برای پرداخت استفاده می‌شود
+  REJECTED  // مدیر رد کرد (دلیل در payoutRejectReason)
+}
+
+model PublisherProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  // شمارهٔ کارت به‌صورت رمزگذاری‌شده (AES-GCM با lib/crypto.ts) ذخیره می‌شود؛ هرگز خام.
+  // فقط مدیر در لحظهٔ پرداخت آن را رمزگشایی می‌بیند؛ صاحب پیج فقط ۴ رقم آخر را می‌بیند.
+  payoutCard     String?
+  payoutIban     String?
+  bio            String?
+  // اطلاعات هویتی برای تطبیق نام صاحب کارت
+  firstName          String?
+  lastName           String?
+  cardLast4          String?
+  // کد ملی رمزگذاری‌شده؛ فقط تا لحظهٔ تصمیم مدیر نگه داشته می‌شود و بعد پاک می‌شود.
+  nationalIdEnc      String?
+  payoutStatus       PayoutVerification @default(NONE)
+  payoutRejectReason String?
+  payoutSubmittedAt  DateTime?
+  payoutReviewedAt   DateTime?
+  payoutReviewedById String?   // شناسهٔ مدیر بررسی‌کننده (بدون کلید خارجی؛ لاگ کامل در AuditLog)
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------- صفحات اینستاگرام ----------
+
+enum PageStatus {
+  PENDING   // ثبت‌شده، در انتظار تأیید ادمین
+  APPROVED
+  REJECTED
+  DISABLED  // غیرفعال توسط ادمین
+}
+
+enum VerificationMethod {
+  GRAPH
+  BIO_CODE
+  MANUAL
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  AWAITING
+  VERIFIED
+}
+
+enum StatsSource {
+  SELF   // خوداظهاری صاحب پیج
+  API    // تأییدشده از Instagram Graph API
+}
+
+model InstaPage {
+  id            String             @id @default(cuid())
+  ownerId       String
+  handle        String             @unique // شناسه عمومی پیج = آیدی اینستاگرام (تا پذیرش درخواست مخفی است)
+  title         String
+  category      String
+  city          String?
+  bio           String?
+  followers     Int                @default(0)
+  avgStoryViews Int                @default(0)
+  avgPostViews  Int                @default(0)
+  avgReelsViews Int                @default(0)
+  // تعرفهٔ هر نوع انتشار به تومان؛ ۰ یعنی پیج آن نوع را ارائه نمی‌دهد.
+  priceStory    Int                @default(0)
+  pricePost     Int                @default(0)
+  priceReels    Int                @default(0)
+  status        PageStatus         @default(PENDING)
+  rejectReason  String?
+  avatarUrl     String?
+  statsSource   StatsSource        @default(SELF)
+  lastSyncAt    DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  owner           User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  verification    PageVerification?
+  instagramAccount InstagramAccount?
+  statsHistory    PageStatsSnapshot[]
+  orders          Order[]
+  reports         Report[]           @relation("ReportedPage")
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([category])
+}
+
+model PageVerification {
+  id          String             @id @default(cuid())
+  pageId      String             @unique
+  status      VerificationStatus @default(UNVERIFIED)
+  method      VerificationMethod?
+  code        String?  // کد موقت بیو
+  codeExpiresAt DateTime?
+  verifiedAt  DateTime?
+  note        String?
+
+  page InstaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+model InstagramAccount {
+  id                String   @id @default(cuid())
+  pageId            String   @unique
+  platformUserId    String   // ig user id از Graph API
+  accessTokenEnc    String   // توکن رمزگذاری‌شده (AES)، هرگز خام ذخیره نمی‌شود
+  tokenExpiresAt    DateTime?
+  connectedAt       DateTime @default(now())
+
+  page InstaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+model PageStatsSnapshot {
+  id        String   @id @default(cuid())
+  pageId    String
+  followers Int
+  avgViews  Int
+  reach     Int?
+  takenAt   DateTime @default(now())
+
+  page InstaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, takenAt])
+}
+
+// ---------- کمپین‌ها و سفارش‌ها ----------
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+// گردش سفارش در روند جدید:
+//   REQUESTED → ACCEPTED → PUBLISHED → CONFIRMED → PAID_FULL
+//   شاخه‌ها: DECLINED، CANCELLED (لغو/انقضا)، DISPUTED (اختلاف)
+// مقدارهای NEGOTIATING / AGREED / PARTIALLY_PAID / IN_PROGRESS فعلاً استفاده نمی‌شوند و برای حفظ داده می‌مانند.
+enum OrderStatus {
+  REQUESTED        // درخواست ارسال‌شده به صاحب پیج (پول بلوکه شده)
+  ACCEPTED         // صاحب پیج پذیرفت؛ هویت دو طرف آشکار می‌شود
+  DECLINED
+  NEGOTIATING
+  AGREED
+  PARTIALLY_PAID
+  IN_PROGRESS
+  PUBLISHED        // مدرک انتشار ثبت شد
+  CONFIRMED        // تبلیغ‌کننده (یا مدیر پس از سکوت تبلیغ‌کننده) تأیید کرد
+  PAID_FULL        // مدیر به صاحب پیج پرداخت کرد
+  DISPUTED
+  CANCELLED
+}
+
+// روند قدیمی «پرداخت مستقیم»؛ فعلاً استفاده نمی‌شود و حذف هم نشده تا داده‌ها حفظ شوند.
+enum PaymentStage {
+  STAGE1
+  STAGE2
+}
+
+enum PaymentStatus {
+  DECLARED
+  CONFIRMED
+  REJECTED
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  orderNumber String         @unique
+  advertiserId String
+  title       String
+  business    String         // تا پذیرش درخواست از صاحب پیج مخفی است
+  description String
+  link        String         // تا پذیرش درخواست از صاحب پیج مخفی است
+  mediaUrl    String?
+  mediaKind   String?        // image | video
+  budget      Int            // تومان
+  minFollowers Int?
+  targetViews Int?
+  category    String?
+  city        String?
+  notes       String?
+  publishType String         // قدیمی: نوع اول؛ مرجع اصلی publishTypes است
+  // نوع‌های انتخاب‌شده، جداشده با کاما؛ مثل "story,post,reels"
+  publishTypes String        @default("")
+  publishAt   DateTime?      // زمان انتشار موردنظر
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  advertiser User      @relation(fields: [advertiserId], references: [id])
+  orders     Order[]
+
+  @@index([advertiserId])
+  @@index([status])
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  campaignId  String
+  pageId      String
+  amount      Int         // مبلغ همین انتشار (تعرفهٔ پیج برای نوع انتخاب‌شده)، تومان
+  publishType String      // story | post | reels (برای هر پیج در هر کمپین یک نوع)
+  publishAt   DateTime?
+  terms       String?
+  status      OrderStatus @default(REQUESTED)
+  // زمان‌بندی و آشکارسازی هویت
+  respondByAt           DateTime?  // مهلت پاسخ صاحب پیج
+  revealedAt            DateTime?  // لحظهٔ پذیرش؛ تا قبل از آن هویت دو طرف مخفی است
+  publishDeadlineAt     DateTime?  // مهلت انتشار بعد از پذیرش
+  proofSubmittedAt      DateTime?
+  advertiserConfirmedAt DateTime?
+  closedReason          String?    // DECLINED_BY_OWNER | REQUEST_EXPIRED | PUBLISH_EXPIRED | CANCELLED_BY_ADVERTISER | DISPUTE_REFUND
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  campaign  Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  page      InstaPage @relation(fields: [pageId], references: [id])
+  hold      Hold?
+  payments  Payment[]
+  proofs    OrderProof[]
+  disputes  Report[] @relation("DisputeOrder")
+
+  @@unique([campaignId, pageId])
+  @@index([pageId])
+  @@index([status])
+}
+
+// ---------- پول: واریز و بلوکه ----------
+
+enum DepositStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// واریز تبلیغ‌دهنده به حساب پلتفرم (کارت‌به‌کارت). فقط VERIFIED در موجودی حساب می‌شود.
+model Deposit {
+  id           String        @id @default(cuid())
+  userId       String        // تبلیغ‌دهنده
+  amount       Int           // تومان
+  reference    String        // شمارهٔ پیگیری رسید بانکی
+  receiptUrl   String?       // تصویر رسید
+  note         String?
+  status       DepositStatus @default(PENDING)
+  rejectReason String?
+  reviewedById String?       // شناسهٔ مدیر (بدون کلید خارجی؛ لاگ کامل در AuditLog)
+  reviewedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([reference])
+}
+
+enum HoldStatus {
+  HELD        // بلوکه
+  PAYOUT_DUE  // تأیید دوطرفه انجام شد؛ منتظر پرداخت مدیر (بعد از payoutDueAt)
+  PAID_OUT    // مدیر پرداخت کرد و شمارهٔ پیگیری را ثبت کرد
+  REFUNDED    // به موجودی تبلیغ‌دهنده برگشت
+  DISPUTED    // منجمد تا تصمیم مدیر
+}
+
+// بلوکهٔ پول یک سفارش؛ برای هر سفارش حداکثر یکی.
+model Hold {
+  id              String     @id @default(cuid())
+  orderId         String     @unique
+  advertiserId    String
+  amount          Int
+  status          HoldStatus @default(HELD)
+  heldAt          DateTime   @default(now())
+  payoutDueAt     DateTime?  // زودترین زمانی که مدیر مجاز به پرداخت است
+  payoutReference String?    // شمارهٔ پیگیری پرداخت مدیر به صاحب پیج
+  paidOutAt       DateTime?
+  paidOutById     String?    // شناسهٔ مدیر (بدون کلید خارجی؛ لاگ کامل در AuditLog)
+  refundedAt      DateTime?
+  refundReason    String?
+  disputedAt      DateTime?
+  disputeNote     String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  order      Order @relation(fields: [orderId], references: [id])
+  advertiser User  @relation(fields: [advertiserId], references: [id])
+
+  @@index([advertiserId, status])
+  @@index([status, payoutDueAt])
+}
+
+// روند قدیمی «پرداخت مستقیم»؛ فعلاً استفاده نمی‌شود و حذف نشده تا داده‌ها حفظ شوند.
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String
+  stage          PaymentStage
+  amount         Int
+  method         String        // کارت به کارت | درگاه اختصاصی صاحب پیج | ...
+  reference      String?       // شماره پیگیری تراکنش / شماره‌ی درگاه
+  receiptUrl     String?       // لینک یا نام فایل رسید
+  declaredAt     DateTime      @default(now()) // زمان اعلام پرداخت توسط تبلیغ‌کننده
+  status         PaymentStatus @default(DECLARED)
+  confirmedAt    DateTime?
+  confirmedByPage Boolean?     // true = تأیید صاحب پیج
+  note           String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, stage])
+  @@index([status])
+}
+
+model OrderProof {
+  id        String   @id @default(cuid())
+  orderId   String
+  kind      String   @default("POST_LINK") // POST_LINK | STATS_SCREENSHOT
+  proofUrl  String
+  caption   String?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// ---------- امتیازدهی و اعتبار ----------
+
+model UserRating {
+  id        String   @id @default(cuid())
+  raterId   String
+  ratedId   String
+  orderId   String?
+  stars     Int      // 1..5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  rater User @relation("Rater", fields: [raterId], references: [id])
+  rated User @relation("Rated", fields: [ratedId], references: [id])
+
+  @@unique([raterId, orderId])
+  @@index([ratedId])
+}
+
+// ---------- گزارش تخلف و اختلاف ----------
+
+enum ReportKind {
+  PAGE_ABUSE
+  ORDER_DISPUTE
+  USER_ABUSE
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model Report {
+  id         String       @id @default(cuid())
+  kind       ReportKind
+  reporterId String?
+  reportedUserId String?
+  reportedPageId String?
+  disputeOrderId String?
+  subject    String
+  body       String
+  status     ReportStatus @default(OPEN)
+  resolution String?
+  resolvedById String?
+  resolvedAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  reporter      User?     @relation("Reporter", fields: [reporterId], references: [id])
+  reportedUser  User?     @relation("ReportedUser", fields: [reportedUserId], references: [id])
+  reportedPage  InstaPage? @relation("ReportedPage", fields: [reportedPageId], references: [id])
+  disputeOrder  Order?    @relation("DisputeOrder", fields: [disputeOrderId], references: [id])
+  resolvedBy    User?     @relation("AdminResolver", fields: [resolvedById], references: [id])
+
+  @@index([status])
+  @@index([kind])
+}
+
+// ---------- بنرهای تبلیغاتی سایت (CMS) ----------
+
+enum BannerPlacement {
+  HERO        // اسلایدر صفحه اصلی
+  SIDEBAR
+  FOOTER
+  PAGES_TOP   // بالای دایرکتوری پیج‌ها
+}
+
+model Banner {
+  id           String          @id @default(cuid())
+  title        String
+  description  String?
+  link         String
+  desktopImage String?
+  mobileImage  String?
+  placement    BannerPlacement @default(HERO)
+  sortOrder    Int             @default(0)
+  isActive     Boolean         @default(true)
+  startsAt     DateTime?
+  endsAt       DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  createdById  String?
+
+  createdBy User? @relation("BannerAuthor", fields: [createdById], references: [id])
+
+  @@index([placement, sortOrder, isActive])
+}
+
+// ---------- اعلان‌ها ----------
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+// ---------- گزارش فعالیت‌های مدیریتی (Audit Log) ----------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String   // مثلا PAGE_APPROVE, BANNER_CREATE, DEPOSIT_VERIFY, HOLD_PAYOUT, HOLD_REFUND
+  entity    String
+  entityId  String
+  meta      String?  // JSON
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([actorId])
+}

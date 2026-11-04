@@ -11,7 +11,6 @@ import { useToast } from "@/components/ui/toast";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { PageAvatar, pageTitle, StatsSourceNote } from "@/components/shared/page-card";
-import { VerificationCard } from "@/components/publisher/verification-card";
 import { APPROVAL_STATUS, typeLabel } from "@/lib/constants";
 import { categoryLabel } from "@/lib/categories";
 import { ownedPages } from "@/lib/pages";
@@ -21,7 +20,7 @@ import type { InstaPage } from "@/types";
 import { PageEditDialog } from "@/components/publisher/page-edit-dialog";
 
 export function PageList() {
-  const { pages, removePage, stories } = useStore();
+  const { pages, removePage } = useStore();
   const toast = useToast();
   const [editing, setEditing] = useState<InstaPage | null>(null);
   const [deleting, setDeleting] = useState<InstaPage | null>(null);
@@ -34,7 +33,6 @@ export function PageList() {
       ) : (
         <ul className="grid gap-3 lg:grid-cols-2">
           {mine.map((p) => {
-            const storyCount = stories.filter((s) => s.pageId === p.id && !s.disabled).length;
             return (
               <li key={p.id}>
                 <Card className="space-y-3 p-4">
@@ -50,11 +48,10 @@ export function PageList() {
 
                   {p.bio && <p className="line-clamp-2 text-sm leading-6 text-slate-600">{p.bio}</p>}
 
-                  <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm sm:grid-cols-4">
+                  <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-sm sm:grid-cols-3">
                     <div><dt className="text-xs text-slate-500">فالوئر</dt><dd className="font-bold text-slate-800">{formatNumber(p.followers)}</dd></div>
                     <div><dt className="text-xs text-slate-500">بازدید استوری</dt><dd className="font-bold text-slate-800">{formatNumber(p.avgStoryViews)}</dd></div>
                     <div><dt className="text-xs text-slate-500">بازدید پست/ریلز</dt><dd className="font-bold text-slate-800">{formatNumber(p.avgPostViews)}</dd></div>
-                    <div><dt className="text-xs text-slate-500">استوری فعال</dt><dd className="font-bold text-slate-800">{formatNumber(storyCount)}</dd></div>
                   </dl>
 
                   <div className="flex flex-wrap gap-1.5">
@@ -71,7 +68,6 @@ export function PageList() {
                   )}
 
                   <StatsSourceNote page={p} />
-                  <VerificationCard page={p} />
 
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => setEditing(p)}><Pencil />ویرایش اطلاعات</Button>
@@ -92,7 +88,7 @@ export function PageList() {
           <DialogHeader>
             <DialogTitle>حذف پیج</DialogTitle>
             <DialogDescription>
-              با حذف {deleting ? pageTitle(deleting) : "این پیج"}، استوری‌ها و پیشنهادهای مرتبط آن هم از این مرورگر حذف می‌شوند و یک جای ظرفیت ثبت پیج آزاد می‌شود. این عمل قابل بازگشت نیست.
+              با حذف {deleting ? pageTitle(deleting) : "این پیج"}، پیشنهادهای مرتبط آن هم از این مرورگر حذف می‌شوند و یک جای ظرفیت ثبت پیج آزاد می‌شود. این عمل قابل بازگشت نیست.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

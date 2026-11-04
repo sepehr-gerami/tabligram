@@ -8,10 +8,15 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Field, describe } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { PUBLIC_ROLES, type PublicRoleId } from "@/lib/roles";
-import { validateAuth, type Errors } from "@/lib/validation";
+import { BRAND_FA } from "@/lib/brand";
+import {
+  MIN_PASSWORD_LENGTH, normalizeMobile, normalizeName, validateLogin, validateRegister,
+  type AuthErrors, type AuthField,
+} from "@/lib/auth-rules";
 
 export type AuthMode = "login" | "register";
+
+const FIELD_ORDER: AuthField[] = ["name", "mobile", "password"];
 
 export function AuthDialog({ mode, onClose }: { mode: AuthMode | null; onClose: () => void }) {
   return (
@@ -21,35 +26,77 @@ export function AuthDialog({ mode, onClose }: { mode: AuthMode | null; onClose: 
   );
 }
 
+/**
+ * فرم ورود/ثبت‌نام واقعی (بدون انتخاب نقش).
+ * نقش تبلیغ‌کننده یا صاحب پیج از روی کاری که کاربر بعداً می‌کند (ساخت کمپین / ثبت پیج) ساخته می‌شود.
+ */
 function AuthForm({ mode, onDone }: { mode: AuthMode; onDone: () => void }) {
   const router = useRouter();
   const toast = useToast();
-  const [values, setValues] = useState({ name: "", mobile: "" });
-  const [role, setRole] = useState<PublicRoleId>("advertiser");
-  const [errors, setErrors] = useState<Errors<"name" | "mobile">>({});
+  const [values, setValues] = useState({ name: "", mobile: "", password: "" });
+  const [errors, setErrors] = useState<AuthErrors>({});
+  const [serverError, setServerError] = useState("");
+  const [busy, setBusy] = useState(false);
   const isRegister = mode === "register";
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    const found = validateAuth(values, isRegister);
+    if (busy) return;
+
+    const name = normalizeName(values.name);
+    const mobile = normalizeMobile(values.mobile);
+    const found = isRegister
+      ? validateRegister({ name, mobile, password: values.password })
+      : validateLogin({ mobile, password: values.password });
     setErrors(found);
-    if (Object.keys(found).length) {
-      document.getElementById(found.name ? "name" : "mobile")?.focus();
+    setServerError("");
+    const firstInvalid = FIELD_ORDER.find((f) => found[f]);
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
       return;
     }
-    const target = PUBLIC_ROLES.find((r) => r.id === role) ?? PUBLIC_ROLES[0];
-    toast({ tone: "success", title: "وارد پنل نمایشی شدید", description: `نقش: ${target.label}. این ورود فقط نمایشی است.` });
-    onDone();
-    router.push(target.href);
+
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/auth/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isRegister ? { name, mobile, password: values.password } : { mobile, password: values.password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        name?: string; isAdmin?: boolean; error?: string; fields?: AuthErrors;
+      };
+      if (!res.ok) {
+        if (data.fields) setErrors(data.fields);
+        setServerError(typeof data.error === "string" ? data.error : "مشکلی پیش آمد. دوباره تلاش کنید.");
+        return;
+      }
+      toast({
+        tone: "success",
+        title: isRegister ? "حساب شما ساخته شد" : "وارد شدید",
+        description: data.name ? `${data.name} عزیز، خوش آمدید.` : undefined,
+      });
+      onDone();
+      if (data.isAdmin) router.push("/admin");
+      router.refresh();
+    } catch {
+      setServerError("ارتباط با سرور برقرار نشد. اینترنت خود را بررسی کنید.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
       <DialogHeader>
-        <DialogTitle>{isRegister ? "ثبت‌نام در پخش‌چی" : "ورود به پخش‌چی"}</DialogTitle>
-        <DialogDescription>نقش خود را انتخاب کنید تا به پنل مربوط به آن بروید.</DialogDescription>
+        <DialogTitle>{isRegister ? `ثبت‌نام در ${BRAND_FA}` : `ورود به ${BRAND_FA}`}</DialogTitle>
+        <DialogDescription>
+          {isRegister
+            ? "با شمارهٔ موبایل حساب بسازید. بعداً هر وقت خواستید می‌توانید کمپین بسازید یا پیج خود را ثبت کنید."
+            : "شمارهٔ موبایل و رمز عبور خود را وارد کنید."}
+        </DialogDescription>
       </DialogHeader>
-      <Alert tone="warning">این نسخه نمایشی است: حساب واقعی ساخته نمی‌شود و رمز یا کد تأییدی ارسال نمی‌شود.</Alert>
+      {serverError && <Alert tone="warning">{serverError}</Alert>}
       {isRegister && (
         <Field id="name" label="نام و نام خانوادگی" required error={errors.name}>
           <Input {...describe("name", errors.name)} autoComplete="name" value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} />
@@ -58,18 +105,12 @@ function AuthForm({ mode, onDone }: { mode: AuthMode; onDone: () => void }) {
       <Field id="mobile" label="شمارهٔ موبایل" required error={errors.mobile}>
         <Input {...describe("mobile", errors.mobile)} dir="ltr" className="text-end" type="tel" inputMode="numeric" autoComplete="tel" placeholder="09121234567" value={values.mobile} onChange={(e) => setValues({ ...values, mobile: e.target.value })} />
       </Field>
-      <fieldset className="space-y-2">
-        <legend className="mb-1.5 text-sm font-medium text-slate-800">نقش نمایشی</legend>
-        <div className="grid grid-cols-2 gap-2">
-          {PUBLIC_ROLES.map(({ id, label, icon: Icon }) => (
-            <label key={id} className="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-slate-200 p-3 text-sm has-[:checked]:border-brand-600 has-[:checked]:bg-brand-50 has-[:checked]:text-brand-700 has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-100">
-              <input type="radio" name="role" value={id} checked={role === id} onChange={() => setRole(id)} className="sr-only" />
-              <Icon aria-hidden className="size-5" />{label}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <Button type="submit" size="lg" className="w-full">{isRegister ? "ساخت حساب نمایشی" : "ورود به پنل"}</Button>
+      <Field id="password" label="رمز عبور" required error={errors.password}>
+        <Input {...describe("password", errors.password)} dir="ltr" className="text-end" type="password" autoComplete={isRegister ? "new-password" : "current-password"} placeholder={isRegister ? `حداقل ${MIN_PASSWORD_LENGTH} کاراکتر` : undefined} value={values.password} onChange={(e) => setValues({ ...values, password: e.target.value })} />
+      </Field>
+      <Button type="submit" size="lg" className="w-full" disabled={busy}>
+        {busy ? "لطفاً صبر کنید…" : isRegister ? "ساخت حساب" : "ورود"}
+      </Button>
     </form>
   );
 }

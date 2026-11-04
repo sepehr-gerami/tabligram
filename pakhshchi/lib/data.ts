@@ -60,5 +60,4 @@ export const initialState: StoreState = {
     { id: "o3", campaignId: null, pageId: "p8", campaignTitle: "تخفیف پاییزه لوازم آرایشی", business: "فروشگاه رُز", topic: "زیبایی", amount: 700000, publishType: "post", deadline: "2026-11-02T00:00:00Z", status: "accepted" },
     { id: "o4", campaignId: null, pageId: "p8", campaignTitle: "فروش ویژه موبایل", business: "موبایل‌پلاس", topic: "فناوری", amount: 1200000, publishType: "story", deadline: "2026-10-31T00:00:00Z", status: "rejected" },
   ],
-  stories: [],
 };

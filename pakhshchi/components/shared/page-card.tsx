@@ -26,23 +26,14 @@ export function PageAvatar({ page, size = 54 }: { page: InstaPage; size?: number
 
 export const pageTitle = (p: InstaPage) => p.title?.trim() || p.handle;
 
-/** Shows whether the page stats are verified (ownership verified via Graph/bio) or self-reported. */
-export function StatsSourceNote({ page, className }: { page?: InstaPage; className?: string }) {
-  const verified = page ? (page.verification?.status === "verified" || page.statsSource === "verified") : false;
-  if (verified) {
-    return (
-      <p className={cn("text-[11px] leading-5 font-medium text-emerald-700", className)}>
-        آمار این پیج تأییدشده است (اتصال حساب اینستاگرام / کد بیو).
-      </p>
-    );
-  }
+/** منبع آمار را به‌صورت شفاف و بدون ادعای تأیید مستقل نمایش می‌دهد. */
+export function StatsSourceNote({ className }: { page?: InstaPage; className?: string }) {
   return (
     <p className={cn("text-[11px] leading-5 text-slate-500", className)}>
-      آمار «ثبت‌شده توسط صاحب پیج» است و توسط اینستاگرام تأیید نشده.
+      آمار بر اساس اطلاعات اعلام‌شده توسط صاحب پیج ثبت شده و مستقلاً توسط اینستاگرام راستی‌آزمایی نشده است.
     </p>
   );
 }
-
 export function PageCard({ page, onSelect, selected = false, actionLabel }: {
   page: InstaPage; onSelect?: () => void; selected?: boolean; actionLabel?: string;
 }) {
@@ -58,8 +49,8 @@ export function PageCard({ page, onSelect, selected = false, actionLabel }: {
           <p className="text-xs text-slate-500">{categoryLabel(page.category)}{page.city ? ` · ${page.city}` : ""}</p>
         </div>
         <div className="ms-auto flex flex-col items-end gap-1">
-          <Badge tone="success">تأییدشده</Badge>
-          {page.statsSource === "verified" && <Badge tone="info">آمار تأییدشده</Badge>}
+          {page.approval === "approved" && <Badge tone="success">تأیید شده</Badge>}
+
         </div>
       </div>
 

@@ -1,6 +1,5 @@
-import { STORY_LIFETIME_HOURS } from "@/lib/constants";
 import { isDemoOwner } from "@/lib/identity";
-import type { InstaPage, PublishType, Story, StoryStatus } from "@/types";
+import type { InstaPage, PublishType } from "@/types";
 
 /** A page may only be ordered/edited while it is approved. */
 export const isPublicPage = (p: InstaPage) => p.approval === "approved";
@@ -29,18 +28,3 @@ export const priceSummary = (p: InstaPage) => {
 };
 
 const TYPE_LABELS = { story: "استوری", post: "پست", reels: "ریلز" } as const;
-
-export const storyStatus =  (s: Story, now = Date.now()): StoryStatus => {
-  if (s.disabled) return "disabled";
-  return new Date(s.expiresAt).getTime() > now ? "active" : "expired";
-};
-
-export const activeStories = (stories: Story[], pages: InstaPage[], now = Date.now()) => {
-  const approved = new Set(pages.filter(isPublicPage).map((p) => p.id));
-  return stories
-    .filter((s) => approved.has(s.pageId) && storyStatus(s, now) === "active")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-};
-
-export const storyExpiry = (from = new Date()) =>
-  new Date(from.getTime() + STORY_LIFETIME_HOURS * 36e5).toISOString();

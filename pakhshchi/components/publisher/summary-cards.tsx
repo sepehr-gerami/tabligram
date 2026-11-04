@@ -4,18 +4,16 @@ import { BadgeCheck, Clock, Inbox, Layers, Wallet } from "lucide-react";
 import { StatCard } from "@/components/shared/stat-card";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { MAX_PAGES_PER_OWNER } from "@/lib/constants";
-import { ownedPages, storyStatus } from "@/lib/pages";
+import { ownedPages } from "@/lib/pages";
 import { useStore } from "@/lib/store";
 import { formatNumber, formatToman } from "@/lib/utils";
 
 export function SummaryCards() {
-  const { pages, offers, stories } = useStore();
+  const { pages, offers } = useStore();
   const mine = ownedPages(pages);
   const myIds = new Set(mine.map((p) => p.id));
   const myOffers = offers.filter((o) => o.pageId && myIds.has(o.pageId));
   const accepted = myOffers.filter((o) => o.status === "accepted");
-  const myStories = stories.filter((s) => myIds.has(s.pageId));
-  const activeStoryCount = myStories.filter((s) => storyStatus(s) === "active").length;
 
   return (
     <ReadyGate rows={2}>
@@ -29,7 +27,6 @@ export function SummaryCards() {
           hint={`${formatNumber(myOffers.filter((o) => o.status === "new").length)} جدید`} />
         <StatCard icon={BadgeCheck} label="پیشنهادهای پذیرفته‌شده" value={accepted.length} />
         <StatCard icon={Wallet} label="مجموع پیشنهادهای پذیرفته" value={formatToman(accepted.reduce((s, o) => s + o.amount, 0))} hint="مبلغ پیشنهادی، نه پرداخت‌شده" />
-        <StatCard icon={Layers} label="استوری‌های فعال" value={activeStoryCount} hint={`${formatNumber(myStories.length)} استوری ثبت‌شده`} />
       </div>
 
       <section aria-labelledby="stats-summary-title" className="mt-6">

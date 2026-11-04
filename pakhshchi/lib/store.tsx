@@ -4,16 +4,15 @@ import { createContext, useContext, useEffect, useMemo, useReducer, useState, ty
 import { initialState } from "@/lib/data";
 import { categoryLabel, MAX_PAGES_PER_OWNER } from "@/lib/constants";
 import { DEMO_USER_ID, isDemoOwner } from "@/lib/identity";
-import { storyExpiry } from "@/lib/pages";
 import {
   confirmVerification, emptyVerification, migrateVerification,
   startVerification as startVerif,
 } from "@/lib/verification";
 import type {
-  ApprovalStatus, Assignment, Campaign, CampaignStatus, EscrowStatus, InstaPage, OfferStatus, Story, StoreState, VerificationMethod,
+  ApprovalStatus, Assignment, Campaign, CampaignStatus, EscrowStatus, InstaPage, OfferStatus, StoreState, VerificationMethod,
 } from "@/types";
 
-/** v2 added page stats/tariffs/ownership and stories; v1 data is migrated on read. */
+/** v2 added page statistics, tariffs and ownership; v1 data is migrated on read. */
 const STORAGE_KEY = "pakhshchi:demo:v2";
 const LEGACY_KEY = "pakhshchi:demo:v1";
 
@@ -37,10 +36,7 @@ type Action =
   | { type: "setOfferStatus"; id: string; status: OfferStatus }
   | { type: "assignPage"; campaignId: string; pageId: string; deadline: string }
   | { type: "unassignPage"; campaignId: string; pageId: string }
-  | { type: "updateAssignment"; campaignId: string; pageId: string; patch: Partial<Pick<Assignment, "status" | "proofUrl">> }
-  | { type: "addStory"; story: Story }
-  | { type: "setStoryDisabled"; id: string; disabled: boolean }
-  | { type: "removeStory"; id: string };
+  | { type: "updateAssignment"; campaignId: string; pageId: string; patch: Partial<Pick<Assignment, "status" | "proofUrl">> };
 
 const mapCampaign = (s: StoreState, id: string, fn: (c: Campaign) => Campaign): StoreState => ({
   ...s,
@@ -115,7 +111,6 @@ function reducer(state: StoreState, a: Action): StoreState {
       return {
         ...state,
         pages: state.pages.filter((p) => !(p.id === a.id && (isDemoOwner(p.ownerId) || p.owned))),
-        stories: state.stories.filter((s) => s.pageId !== a.id),
         offers: state.offers.filter((o) => o.pageId !== a.id),
       };
     case "setApproval":
@@ -167,24 +162,6 @@ function reducer(state: StoreState, a: Action): StoreState {
         ...c,
         assignments: c.assignments.map((x) => (x.pageId === a.pageId ? { ...x, ...a.patch } : x)),
       }));
-    case "addStory": {
-      // A story can only be attached to a page the demo owner actually owns.
-      const page = state.pages.find((p) => p.id === a.story.pageId);
-      if (!page || !(isDemoOwner(page.ownerId) || page.owned)) return state;
-      return { ...state, stories: [a.story, ...state.stories] };
-    }
-    case "setStoryDisabled": {
-      const story = state.stories.find((s) => s.id === a.id);
-      const page = story && state.pages.find((p) => p.id === story.pageId);
-      if (!story || !page || !(isDemoOwner(page.ownerId) || page.owned)) return state;
-      return { ...state, stories: state.stories.map((s) => (s.id === a.id ? { ...s, disabled: a.disabled } : s)) };
-    }
-    case "removeStory": {
-      const story = state.stories.find((s) => s.id === a.id);
-      const page = story && state.pages.find((p) => p.id === story.pageId);
-      if (!story || !page || !(isDemoOwner(page.ownerId) || page.owned)) return state;
-      return { ...state, stories: state.stories.filter((s) => s.id !== a.id) };
-    }
     default:
       return state;
   }
@@ -198,9 +175,6 @@ interface StoreApi extends StoreState {
   updatePage: (id: string, patch: PagePatch) => void;
   removePage: (id: string) => void;
   setApproval: (id: string, a: ApprovalStatus, reason?: string) => void;
-  addStory: (input: { pageId: string; caption: string; mediaUrl: string | null; mediaKind: "image" | "video" | null }) => void;
-  setStoryDisabled: (id: string, disabled: boolean) => void;
-  removeStory: (id: string) => void;
   setOfferStatus: (id: string, s: OfferStatus) => void;
   assignPage: (campaignId: string, pageId: string) => void;
   unassignPage: (campaignId: string, pageId: string) => void;
@@ -255,7 +229,7 @@ function migrate(raw: StoreState): StoreState {
       escrow: x.escrow ?? { status: "unpaid", amount: 0, heldAt: null, releasedAt: null, note: "" },
     })),
   }));
-  return { pages, campaigns, offers: raw.offers, stories: raw.stories ?? [] };
+  return { pages, campaigns, offers: raw.offers };
 }
 
 function loadSavedState(): StoreState | null {
@@ -305,19 +279,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     updatePage: (id, patch) => dispatch({ type: "updatePage", id, patch }),
     removePage: (id) => dispatch({ type: "removePage", id }),
     setApproval: (id, approval, reason) => dispatch({ type: "setApproval", id, approval, reason }),
-    addStory: ({ pageId, caption, mediaUrl, mediaKind }) => {
-      const now = new Date();
-      dispatch({
-        type: "addStory",
-        story: {
-          id: `s-${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
-          pageId, ownerId: DEMO_USER_ID, caption: caption.trim(), mediaUrl, mediaKind,
-          createdAt: now.toISOString(), expiresAt: storyExpiry(now), disabled: false,
-        },
-      });
-    },
-    setStoryDisabled: (id, disabled) => dispatch({ type: "setStoryDisabled", id, disabled }),
-    removeStory: (id) => dispatch({ type: "removeStory", id }),
     setOfferStatus: (id, status) => dispatch({ type: "setOfferStatus", id, status }),
     assignPage: (campaignId, pageId) =>
       dispatch({ type: "assignPage", campaignId, pageId, deadline: new Date(Date.now() + 7 * 864e5).toISOString() }),

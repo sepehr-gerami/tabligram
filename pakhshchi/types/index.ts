@@ -7,12 +7,11 @@ export type CategoryId =
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type OfferStatus = "new" | "accepted" | "rejected";
 export type PublishStatus = "awaiting" | "published" | "failed";
-export type StoryStatus = "active" | "expired" | "disabled";
 
 /** دو منبع آمار: «تأییدشده» (Instagram Graph API) یا «خوداظهاری» (صاحب پیج). */
 export type StatsSource = "verified" | "self";
 /** روش تأیید مالکیت پیج. */
-export type VerificationMethod = "graph" | "bio-code" | "story-code";
+export type VerificationMethod = "graph" | "bio-code" | "manual";
 /** چرخهٔ تأیید مالکیت. */
 export type VerificationStatus = "unverified" | "awaiting" | "verified";
 /** وضعیت وجه قفل‌شدهٔ سفارش (Escrow). */
@@ -105,19 +104,10 @@ export interface PageVerification {
   note: string;
 }
 
-export interface Story {
-  id: string;
-  pageId: string;
-  ownerId: string | null;
-  caption: string;
-  /** Object URL of the picked image; preview only, never persisted. */
-  mediaUrl: string | null;
-  mediaKind: "image" | "video" | null;
-  createdAt: string;
-  /** ISO time; stories are active until then. */
-  expiresAt: string;
-  /** Set by the owner; a disabled story is hidden even before it expires. */
-  disabled: boolean;
+export interface StoreState {
+  campaigns: Campaign[];
+  pages: InstaPage[];
+  offers: Offer[];
 }
 
 export interface Offer {
@@ -131,11 +121,4 @@ export interface Offer {
   publishType: PublishType;
   deadline: string;
   status: OfferStatus;
-}
-
-export interface StoreState {
-  campaigns: Campaign[];
-  pages: InstaPage[];
-  offers: Offer[];
-  stories: Story[];
 }

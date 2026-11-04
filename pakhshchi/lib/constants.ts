@@ -56,5 +56,4 @@ export const MAX_PAGES_PER_OWNER = 5;
  */
 export const HIGH_TARIFF_THRESHOLD = 1_000_000;
 
-/** Stories behave like social stories: they stop being public after this long. */
-export const STORY_LIFETIME_HOURS = 24;
+/** صفحه‌های مصرف‌کننده در UI استوری ندارند؛ تعرفه‌های انتشار فقط پست و ریلز. */
