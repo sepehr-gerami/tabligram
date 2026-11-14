@@ -19,9 +19,9 @@ export function LogoMark({ className = "size-9" }: { className?: string }) {
 
 export function Logo({ light = false }: { light?: boolean }) {
   return (
-    <Link href="/" className="inline-flex items-center gap-2.5" aria-label="پخش‌چی، صفحهٔ اصلی">
+    <Link href="/" className="inline-flex items-center gap-2.5" aria-label="تبلیگرام، صفحهٔ اصلی">
       <LogoMark />
-      <span className={`text-xl font-extrabold ${light ? "text-white" : "text-navy-900"}`}>پخش‌چی</span>
+      <span className={`text-xl font-extrabold ${light ? "text-white" : "text-navy-900"}`}>تبلیگرام</span>
     </Link>
   );
 }

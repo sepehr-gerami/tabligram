@@ -77,7 +77,7 @@ export function startVerification(state: VerificationState, handle: string, meth
 }
 
 /** Message the owner should paste into their bio. */
-export const bioInstruction = (code: string) => `${code} | پخشچی`;
+export const bioInstruction = (code: string) => `${code} | تبلیگرام`;
 
 /**
  * Confirms the pending flow. In this demo the owner self-confirms after

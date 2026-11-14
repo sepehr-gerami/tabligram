@@ -18,10 +18,10 @@ export type AuthMode = "login" | "register";
 
 const FIELD_ORDER: AuthField[] = ["name", "mobile", "password"];
 
-export function AuthDialog({ mode, onClose }: { mode: AuthMode | null; onClose: () => void }) {
+export function AuthDialog({ mode, onClose, onSuccess }: { mode: AuthMode | null; onClose: () => void; onSuccess?: (data: { name?: string; isAdmin?: boolean }) => void }) {
   return (
     <Dialog open={mode !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>{mode && <AuthForm key={mode} mode={mode} onDone={onClose} />}</DialogContent>
+      <DialogContent>{mode && <AuthForm key={mode} mode={mode} onDone={onClose} onSuccess={onSuccess} />}</DialogContent>
     </Dialog>
   );
 }
@@ -30,7 +30,7 @@ export function AuthDialog({ mode, onClose }: { mode: AuthMode | null; onClose: 
  * فرم ورود/ثبت‌نام واقعی (بدون انتخاب نقش).
  * نقش تبلیغ‌کننده یا صاحب پیج از روی کاری که کاربر بعداً می‌کند (ساخت کمپین / ثبت پیج) ساخته می‌شود.
  */
-function AuthForm({ mode, onDone }: { mode: AuthMode; onDone: () => void }) {
+function AuthForm({ mode, onDone, onSuccess }: { mode: AuthMode; onDone: () => void; onSuccess?: (data: { name?: string; isAdmin?: boolean }) => void }) {
   const router = useRouter();
   const toast = useToast();
   const [values, setValues] = useState({ name: "", mobile: "", password: "" });
@@ -77,6 +77,7 @@ function AuthForm({ mode, onDone }: { mode: AuthMode; onDone: () => void }) {
         description: data.name ? `${data.name} عزیز، خوش آمدید.` : undefined,
       });
       onDone();
+      onSuccess?.(data);
       if (data.isAdmin) router.push("/admin");
       router.refresh();
     } catch {

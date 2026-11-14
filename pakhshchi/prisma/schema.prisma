@@ -146,6 +146,7 @@ model InstaPage {
   id            String             @id @default(cuid())
   ownerId       String
   handle        String             @unique // شناسه عمومی پیج = آیدی اینستاگرام (تا پذیرش درخواست مخفی است)
+  url           String?            // لینک کامل پیج (اختیاری)
   title         String
   category      String
   city          String?
@@ -269,6 +270,8 @@ model Campaign {
   mediaUrl    String?
   mediaKind   String?        // image | video
   budget      Int            // تومان
+  // حداکثر تعداد پیج/انتشاری که تبلیغ‌دهنده می‌خواهد؛ توزیع خودکار تا این تعداد ادامه می‌یابد.
+  pageCount   Int            @default(1)
   minFollowers Int?
   targetViews Int?
   category    String?
@@ -363,7 +366,11 @@ model Hold {
   id              String     @id @default(cuid())
   orderId         String     @unique
   advertiserId    String
-  amount          Int
+  amount          Int        // مبلغ بلوکه‌شدهٔ کامل (سهم پیج + کمیسیون)
+  // کمیسیون پلتفرم در لحظهٔ ساخت بلوکه محاسبه و ثابت می‌شود تا تغییر نرخ، سفارش‌های قبلی را عوض نکند.
+  commissionBps   Int        @default(1000) // 1000 = ۱۰٪
+  commission      Int        @default(0)
+  publisherAmount Int        @default(0) // مبلغ خالص قابل پرداخت به صاحب پیج = amount - commission
   status          HoldStatus @default(HELD)
   heldAt          DateTime   @default(now())
   payoutDueAt     DateTime?  // زودترین زمانی که مدیر مجاز به پرداخت است

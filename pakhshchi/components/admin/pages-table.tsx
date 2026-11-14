@@ -12,7 +12,7 @@ import { ReadyGate } from "@/components/shared/ready-gate";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { APPROVAL_STATUS, typeLabel } from "@/lib/constants";
 import { categoryLabel } from "@/lib/categories";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatNumber, ltr } from "@/lib/utils";
 import { priceSummary } from "@/lib/pages";
 import type { ApprovalStatus, InstaPage } from "@/types";

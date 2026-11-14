@@ -11,7 +11,7 @@ import { StoryRing } from "@/components/ui/story-ring";
 import { buildSlides, type BannerSlide } from "@/lib/banners";
 import { categoryLabel, typeLabel } from "@/lib/constants";
 import { categoryIcon } from "@/lib/categories";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { cn, formatNumber } from "@/lib/utils";
 import type { CategoryId } from "@/types";
 
@@ -165,7 +165,7 @@ export function AdBannerCarousel({ className }: { className?: string }) {
   const Icon = categoryIcon(slide.category);
 
   return (
-    <section aria-roledescription="carousel" aria-label="نمونه تبلیغات پخش‌چی" onKeyDown={onKey} onPointerMove={onMove} onPointerEnter={onEnter} onPointerLeave={onLeave}
+    <section aria-roledescription="carousel" aria-label="نمونه تبلیغات تبلیگرام" onKeyDown={onKey} onPointerMove={onMove} onPointerEnter={onEnter} onPointerLeave={onLeave}
       onFocus={onFocus} onBlur={() => setFocused(false)}
       className={cn("relative h-[38rem] overflow-hidden rounded-[2rem] text-white shadow-lift ring-1 ring-black/5 md:h-[30rem]", className)}>
       <AnimatePresence initial={false}>

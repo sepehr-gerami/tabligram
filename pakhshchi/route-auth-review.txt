@@ -1,0 +1,1420 @@
+﻿PROJECT: C:\Users\Modern\Downloads\Telegram Desktop\pakhshchi\pakhshchi
+
+
+========================================
+FILE: \app\api\auth\login\route.ts
+========================================
+
+import { NextResponse } from "next/server";
+import { createSession, verifyCredentials } from "@/lib/auth";
+import { assertSameOrigin, badRequest, clientIp, readJson, tooManyRequests, withErrors } from "@/lib/api";
+import { hit, reset } from "@/lib/rate-limit";
+import { normalizeMobile, validateLogin } from "@/lib/auth-rules";
+
+const WINDOW_MS = 15 * 60_000;
+const GENERIC_ERROR = "شمارهٔ موبایل یا رمز عبور اشتباه است.";
+
+/** ورود: موبایل + رمز → سشن کوکی HttpOnly. نقشی از کاربر دریافت نمی‌شود. */
+export async function POST(req: Request) {
+  return withErrors(async () => {
+    assertSameOrigin(req);
+    const body = await readJson(req);
+    if (!body) return badRequest("درخواست نامعتبر است.");
+
+    const mobile = normalizeMobile(String(body.mobile ?? ""));
+    const password = String(body.password ?? "");
+    if (Object.keys(validateLogin({ mobile, password })).length) return badRequest(GENERIC_ERROR);
+
+    const byIp = hit(`login:ip:${clientIp(req)}`, 30, WINDOW_MS);
+    const byMobile = hit(`login:mobile:${mobile}`, 8, WINDOW_MS);
+    if (!byIp.ok || !byMobile.ok) return tooManyRequests(Math.max(byIp.retryAfterSec, byMobile.retryAfterSec));
+
+    const user = await verifyCredentials(mobile, password);
+    if (!user) return NextResponse.json({ error: GENERIC_ERROR }, { status: 401 });
+    if (user.status !== "ACTIVE") {
+      return NextResponse.json({ error: "حساب شما معلق شده است. با پشتیبانی تماس بگیرید." }, { status: 403 });
+    }
+
+    reset(`login:mobile:${mobile}`);
+    await createSession(user.id);
+    return NextResponse.json({ id: user.id, name: user.name, isAdmin: user.role === "ADMIN" });
+  });
+}
+
+
+
+========================================
+FILE: \app\api\auth\register\route.ts
+========================================
+
+import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/db";
+import { createSession, hashPassword } from "@/lib/auth";
+import { assertSameOrigin, badRequest, clientIp, readJson, tooManyRequests, withErrors } from "@/lib/api";
+import { hit } from "@/lib/rate-limit";
+import { normalizeMobile, normalizeName, validateRegister } from "@/lib/auth-rules";
+
+/**
+ * ثبت‌نام: فقط نام + موبایل + رمز.
+ * هر فیلد دیگری (از جمله role) عمداً نادیده گرفته می‌شود: نقش هرگز از کلاینت نمی‌آید.
+ * همهٔ حساب‌های جدید role=USER هستند؛ ادمین فقط با seed/ابزار داخلی ساخته می‌شود.
+ */
+export async function POST(req: Request) {
+  return withErrors(async () => {
+    assertSameOrigin(req);
+    const body = await readJson(req);
+    if (!body) return badRequest("درخواست نامعتبر است.");
+
+    const name = normalizeName(String(body.name ?? ""));
+    const mobile = normalizeMobile(String(body.mobile ?? ""));
+    const password = String(body.password ?? "");
+    const errors = validateRegister({ name, mobile, password });
+    const first = Object.values(errors)[0];
+    if (first) return NextResponse.json({ error: first, fields: errors }, { status: 400 });
+
+    const limited = hit(`register:ip:${clientIp(req)}`, 5, 60 * 60_000);
+    if (!limited.ok) return tooManyRequests(limited.retryAfterSec);
+
+    const passwordHash = await hashPassword(password);
+    try {
+      const user = await prisma.user.create({ data: { mobile, name, passwordHash } });
+      await createSession(user.id);
+      return NextResponse.json({ id: user.id, name: user.name, isAdmin: false }, { status: 201 });
+    } catch (err) {
+      // یکتایی موبایل را خود دیتابیس تضمین می‌کند (بدون race بین «بررسی» و «ساخت»).
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        return NextResponse.json({ error: "این شماره قبلاً ثبت شده است.", fields: { mobile: "این شماره قبلاً ثبت شده است." } }, { status: 409 });
+      }
+      throw err;
+    }
+  });
+}
+
+
+
+========================================
+FILE: \app\api\auth\session\route.ts
+========================================
+
+import { NextResponse } from "next/server";
+import { destroySession, getCurrentUser } from "@/lib/auth";
+import { assertSameOrigin, ok, withErrors } from "@/lib/api";
+
+/** کاربر فعلی (یا null) با پرچم‌های isAdmin / isAdvertiser / isPublisher. */
+export async function GET() {
+  return withErrors(async () => {
+    const user = await getCurrentUser();
+    return NextResponse.json(user, { headers: { "Cache-Control": "no-store" } });
+  });
+}
+
+/** خروج. */
+export async function DELETE(req: Request) {
+  return withErrors(async () => {
+    assertSameOrigin(req);
+    await destroySession();
+    return ok({ ok: true });
+  });
+}
+
+
+
+========================================
+FILE: \app\api\campaigns\[id]\matching-pages\route.ts
+========================================
+
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
+import { affordableTypes } from "@/lib/money-rules";
+import type { PagePublishType } from "@/lib/page-rules";
+
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function GET(req: Request, { params }: Ctx) {
+  try {
+    const user = await requireAuth();
+    const { id } = await params;
+
+    // 1. گرفتن کمپین
+    const campaign = await prisma.campaign.findUnique({
+      where: { id, advertiserId: user.id }
+    });
+    if (!campaign) {
+      return NextResponse.json({ error: "کمپین یافت نشد." }, { status: 404 });
+    }
+
+    // 2. بودجه باقی‌مانده
+    const activeHolds = await prisma.hold.aggregate({
+      where: {
+        order: { campaignId: campaign.id },
+        status: { not: "REFUNDED" }
+      },
+      _sum: { amount: true }
+    });
+    const remainingBudget = campaign.budget - (activeHolds._sum.amount || 0);
+
+    // 3. گرفتن پیج‌ها
+    const pages = await prisma.instaPage.findMany({
+      where: { status: "APPROVED" }
+    });
+
+    // 4. گرفتن تعداد سفارش‌های موفق (با چک کردن خالی نبودن)
+    let completedMap = new Map();
+    if (pages.length > 0) {
+      const paidOrders = await prisma.order.groupBy({
+        by: ['pageId'],
+        where: {
+          pageId: { in: pages.map(p => p.id) },
+          status: "PAID_FULL"
+        },
+        _count: { _all: true }
+      });
+      completedMap = new Map(paidOrders.map(o => [o.pageId, o._count._all]));
+    }
+
+    // 5. نوع‌های انتشار
+    const campaignTypes = (campaign.publishTypes || "").split(",").filter(Boolean) as PagePublishType[];
+
+    // 6. فیلتر کردن
+    const result: any[] = [];
+    for (const page of pages) {
+      const ownerCompletedOrders = completedMap.get(page.id) || 0;
+      
+      if (campaign.category && campaign.category.length > 0 && page.category !== campaign.category) {
+        continue;
+      }
+
+      // اینجا ممکن است خطا بدهد
+      const types = affordableTypes(page, campaignTypes, remainingBudget, ownerCompletedOrders);
+      
+      if (types.length === 0) continue;
+
+      result.push({
+        id: page.id,
+        title: page.title,
+        category: page.category,
+        city: page.city,
+        followers: page.followers,
+        avgStoryViews: page.avgStoryViews,
+        avgPostViews: page.avgPostViews,
+        avgReelsViews: page.avgReelsViews,
+        priceStory: page.priceStory,
+        pricePost: page.pricePost,
+        priceReels: page.priceReels,
+        avatarUrl: page.avatarUrl,
+        availableTypes: types,
+        isCategoryMatch: campaign.category === page.category
+      });
+    }
+
+    return NextResponse.json(result);
+
+  } catch (error: any) {
+    // 🚨 اینجا خطای واقعی را با جزئیات کامل برمی‌گردانیم
+    console.error("DEBUG ERROR in matching-pages:", error);
+    return NextResponse.json({ 
+      error: "خطای دیباگ", 
+      message: error.message, 
+      stack: error.stack 
+    }, { status: 500 });
+  }
+}
+
+
+========================================
+FILE: \app\api\campaigns\[id]\select-page\route.ts
+========================================
+
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { withErrors } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
+import { checkHoldRequest, availableBalance, addHours, POLICY } from "@/lib/money-rules";
+import type { PagePublishType } from "@/lib/page-rules";
+
+type Ctx = { params: Promise<{ id: string }> };
+
+export async function POST(req: Request, { params }: Ctx) {
+  return withErrors(async () => {
+    const user = await requireAuth();
+    const { id } = await params;
+    const body = await req.json();
+    
+    const pageId = body.pageId;
+    const publishType = body.publishType as PagePublishType;
+
+    if (!pageId || !publishType) {
+      return NextResponse.json({ error: "اطلاعات ناقص است." }, { status: 400 });
+    }
+
+    // 1. گرفتن اطلاعات کمپین و پیج
+    const campaign = await prisma.campaign.findUnique({ where: { id, advertiserId: user.id } });
+    const page = await prisma.instaPage.findUnique({ where: { id: pageId } });
+    
+    if (!campaign || !page) {
+      return NextResponse.json({ error: "کمپین یا پیج یافت نشد." }, { status: 404 });
+    }
+
+    // 2. گرفتن موجودی کاربر
+    const deposits = await prisma.deposit.findMany({ where: { userId: user.id, status: "VERIFIED" } });
+    const allUserHolds = await prisma.hold.findMany({ where: { advertiserId: user.id } });
+    const userAvailableBalance = availableBalance(deposits.map(d => d.amount), allUserHolds);
+
+    // 3. گرفتن بلوکه‌های فعال همین کمپین (برای چک کردن بودجه باقی‌مانده)
+    const campaignOrders = await prisma.order.findMany({
+      where: { campaignId: campaign.id },
+      include: { hold: true }
+    });
+    const campaignActiveHolds = campaignOrders
+      .map(o => o.hold)
+      .filter(h => h !== null && h.status !== "REFUNDED")
+      .reduce((sum, h) => sum + (h?.amount || 0), 0);
+
+    // 4. گرفتن تعداد سفارش‌های موفق صاحب پیج (برای قانون تازه‌واردها)
+    const ownerCompletedOrders = await prisma.order.count({
+      where: { pageId: page.id, status: "PAID_FULL" }
+    });
+
+    // 5. فراخوانی قانون تو (checkHoldRequest)
+    const check = checkHoldRequest({
+      advertiserId: user.id,
+      page: {
+        priceStory: page.priceStory,
+        pricePost: page.pricePost,
+        priceReels: page.priceReels,
+        ownerId: page.ownerId,
+        status: page.status,
+        category: page.category
+      },
+      type: publishType,
+      campaign: {
+        advertiserId: campaign.advertiserId,
+        budget: campaign.budget,
+        category: campaign.category,
+        publishTypes: campaign.publishTypes.split(",").filter(Boolean) as PagePublishType[],
+        status: campaign.status
+      },
+      campaignActiveHolds,
+      available: userAvailableBalance,
+      ownerCompletedOrders
+    });
+
+    if (!check.ok) {
+      return NextResponse.json({ error: check.error }, { status: 400 });
+    }
+
+    // 6. ثبت در دیتابیس در قالب Transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // ساخت سفارش
+      const order = await tx.order.create({
+        data: {
+          campaignId: campaign.id,
+          pageId: page.id,
+          amount: check.amount,
+          publishType: publishType,
+          status: "REQUESTED",
+          respondByAt: addHours(new Date(), POLICY.respondHours),
+        }
+      });
+
+      // ساخت بلوکه
+      await tx.hold.create({
+        data: {
+          orderId: order.id,
+          advertiserId: user.id,
+          amount: check.amount,
+          status: "HELD"
+        }
+      });
+
+      return order;
+    });
+
+    return NextResponse.json({ 
+      message: "درخواست ارسال شد و مبلغ بلوکه شد.", 
+      orderId: result.id 
+    });
+  });
+}
+
+
+========================================
+FILE: \app\api\publisher\orders\route.ts
+========================================
+
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { withErrors } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
+
+export async function GET() {
+  return withErrors(async () => {
+    const user = await requireAuth();
+
+    const orders = await prisma.order.findMany({
+      where: {
+        page: { ownerId: user.id }, // فقط پیج‌های همین کاربر
+        status: "REQUESTED"
+      },
+      include: {
+        campaign: {
+          select: {
+            title: true,
+            description: true,
+            // ⚠️ نکته امنیتی: لینک (link) و نام کسب‌وکار (business) رو نمی‌آریم تا مخفی بمونه!
+            mediaUrl: true,
+            mediaKind: true,
+            publishType: true
+          }
+        },
+        page: {
+          select: { title: true } // اسم پیج خودش
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return NextResponse.json(orders);
+  });
+}
+
+
+========================================
+FILE: \app\campaigns\new\page.tsx
+========================================
+
+import type { Metadata } from "next";
+import { CampaignForm } from "@/components/campaigns/campaign-form";
+import { MyOrders } from "@/components/campaigns/my-orders";
+
+export const metadata: Metadata = { title: "ثبت تبلیغ جدید" };
+
+export default function NewCampaignPage() {
+  return (
+    <div className="bg-mist">
+      <div className="mx-auto max-w-7xl space-y-10 px-4 py-8 lg:py-12">
+        <div className="max-w-2xl space-y-2">
+          <h1 className="text-2xl font-extrabold text-navy-900 sm:text-3xl">ثبت تبلیغ جدید</h1>
+          <p className="leading-8 text-slate-600">اطلاعات تبلیغ را وارد کنید؛ پیش‌نمایش آن همان لحظه کنار فرم دیده می‌شود.</p>
+        </div>
+        <CampaignForm />
+        <MyOrders />
+      </div>
+    </div>
+  );
+}
+
+
+
+========================================
+FILE: \app\publisher\dashboard\page.tsx
+========================================
+
+import type { Metadata } from "next";
+import { Inbox, Layers, LayoutDashboard, PlusCircle } from "lucide-react";
+import { PanelShell } from "@/components/layout/panel-shell";
+import { Section } from "@/components/shared/section";
+import { SummaryCards } from "@/components/publisher/summary-cards";
+import { PageForm } from "@/components/publisher/page-form";
+import { PageList } from "@/components/publisher/page-list";
+import { OfferList } from "@/components/publisher/offer-list";
+import { PricingAdvisor } from "@/components/publisher/pricing-advisor";
+
+export const metadata: Metadata = { title: "پنل صاحبان پیج" };
+
+const NAV = [
+  { href: "#summary", label: "خلاصه", icon: LayoutDashboard },
+  { href: "#register", label: "ثبت پیج", icon: PlusCircle },
+  { href: "#my-pages", label: "پیج‌های من", icon: Layers },
+  { href: "#pricing", label: "قیمت‌گذاری هوشمند", icon: Layers },
+  { href: "#offers", label: "پیشنهادها", icon: Inbox },
+];
+
+export default function PublisherDashboardPage() {
+  return (
+    <PanelShell title="پنل صاحبان پیج" description="پیج اینستاگرام خود را ثبت کنید و پیشنهادهای تبلیغاتی را بپذیرید یا رد کنید."
+      notice="نقش «صاحب پیج» نمایشی است و ورود واقعی وجود ندارد. داده‌ها فقط در همین مرورگر ذخیره می‌شوند و آمار واردشده توسط صاحب پیج تأیید اینستاگرام نیست." nav={NAV}>
+      <Section id="summary" title="خلاصه"><SummaryCards /></Section>
+      <Section id="register" title="ثبت پیج اینستاگرام" description="بعد از ثبت، پیج در وضعیت «در انتظار تأیید» قرار می‌گیرد تا مدیر آن را بررسی کند. هر حساب حداکثر ۵ پیج می‌تواند ثبت کند."><PageForm /></Section>
+      <Section id="my-pages" title="پیج‌های من"><PageList /></Section>
+      <Section id="pricing" title="قیمت‌گذاری هوشمند" description="پیشنهاد قیمت بر پایهٔ CPM و بسته‌های تخفیف‌دار برای پیج‌های کوچک."><PricingAdvisor /></Section>
+      <Section id="offers" title="پیشنهادهای تبلیغاتی"><OfferList /></Section>
+    </PanelShell>
+  );
+}
+
+
+
+========================================
+FILE: \components\layout\auth-dialog.tsx
+========================================
+
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { Alert } from "@/components/ui/misc";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, describe } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
+import { BRAND_FA } from "@/lib/brand";
+import {
+  MIN_PASSWORD_LENGTH, normalizeMobile, normalizeName, validateLogin, validateRegister,
+  type AuthErrors, type AuthField,
+} from "@/lib/auth-rules";
+
+export type AuthMode = "login" | "register";
+
+const FIELD_ORDER: AuthField[] = ["name", "mobile", "password"];
+
+export function AuthDialog({ mode, onClose }: { mode: AuthMode | null; onClose: () => void }) {
+  return (
+    <Dialog open={mode !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>{mode && <AuthForm key={mode} mode={mode} onDone={onClose} />}</DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * فرم ورود/ثبت‌نام واقعی (بدون انتخاب نقش).
+ * نقش تبلیغ‌کننده یا صاحب پیج از روی کاری که کاربر بعداً می‌کند (ساخت کمپین / ثبت پیج) ساخته می‌شود.
+ */
+function AuthForm({ mode, onDone }: { mode: AuthMode; onDone: () => void }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [values, setValues] = useState({ name: "", mobile: "", password: "" });
+  const [errors, setErrors] = useState<AuthErrors>({});
+  const [serverError, setServerError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const isRegister = mode === "register";
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+
+    const name = normalizeName(values.name);
+    const mobile = normalizeMobile(values.mobile);
+    const found = isRegister
+      ? validateRegister({ name, mobile, password: values.password })
+      : validateLogin({ mobile, password: values.password });
+    setErrors(found);
+    setServerError("");
+    const firstInvalid = FIELD_ORDER.find((f) => found[f]);
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/auth/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isRegister ? { name, mobile, password: values.password } : { mobile, password: values.password }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        name?: string; isAdmin?: boolean; error?: string; fields?: AuthErrors;
+      };
+      if (!res.ok) {
+        if (data.fields) setErrors(data.fields);
+        setServerError(typeof data.error === "string" ? data.error : "مشکلی پیش آمد. دوباره تلاش کنید.");
+        return;
+      }
+      toast({
+        tone: "success",
+        title: isRegister ? "حساب شما ساخته شد" : "وارد شدید",
+        description: data.name ? `${data.name} عزیز، خوش آمدید.` : undefined,
+      });
+      onDone();
+      if (data.isAdmin) router.push("/admin");
+      router.refresh();
+    } catch {
+      setServerError("ارتباط با سرور برقرار نشد. اینترنت خود را بررسی کنید.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} noValidate className="space-y-4">
+      <DialogHeader>
+        <DialogTitle>{isRegister ? `ثبت‌نام در ${BRAND_FA}` : `ورود به ${BRAND_FA}`}</DialogTitle>
+        <DialogDescription>
+          {isRegister
+            ? "با شمارهٔ موبایل حساب بسازید. بعداً هر وقت خواستید می‌توانید کمپین بسازید یا پیج خود را ثبت کنید."
+            : "شمارهٔ موبایل و رمز عبور خود را وارد کنید."}
+        </DialogDescription>
+      </DialogHeader>
+      {serverError && <Alert tone="warning">{serverError}</Alert>}
+      {isRegister && (
+        <Field id="name" label="نام و نام خانوادگی" required error={errors.name}>
+          <Input {...describe("name", errors.name)} autoComplete="name" value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} />
+        </Field>
+      )}
+      <Field id="mobile" label="شمارهٔ موبایل" required error={errors.mobile}>
+        <Input {...describe("mobile", errors.mobile)} dir="ltr" className="text-end" type="tel" inputMode="numeric" autoComplete="tel" placeholder="09121234567" value={values.mobile} onChange={(e) => setValues({ ...values, mobile: e.target.value })} />
+      </Field>
+      <Field id="password" label="رمز عبور" required error={errors.password}>
+        <Input {...describe("password", errors.password)} dir="ltr" className="text-end" type="password" autoComplete={isRegister ? "new-password" : "current-password"} placeholder={isRegister ? `حداقل ${MIN_PASSWORD_LENGTH} کاراکتر` : undefined} value={values.password} onChange={(e) => setValues({ ...values, password: e.target.value })} />
+      </Field>
+      <Button type="submit" size="lg" className="w-full" disabled={busy}>
+        {busy ? "لطفاً صبر کنید…" : isRegister ? "ساخت حساب" : "ورود"}
+      </Button>
+    </form>
+  );
+}
+
+
+
+========================================
+FILE: \lib\auth.ts
+========================================
+
+import { createHash, randomBytes } from "crypto";
+import { cache } from "react";
+import { cookies } from "next/headers";
+import bcrypt from "bcryptjs";
+import type { Role, UserStatus } from "@prisma/client";
+import { prisma } from "@/lib/db";
+
+export const SESSION_COOKIE = "tabligram_session";
+const SESSION_DAYS = 30;
+const MAX_SESSIONS_PER_USER = 10;
+const BCRYPT_COST = 12;
+
+/** خطای قابل‌نمایش به کاربر با کد HTTP (توسط withErrors به JSON تبدیل می‌شود). */
+export class HttpError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/* ------------------------------------------------------------------ */
+/* رمز عبور                                                            */
+/* ------------------------------------------------------------------ */
+
+export const hashPassword = (pw: string) => bcrypt.hash(pw, BCRYPT_COST);
+
+let timingPad: Promise<string> | undefined;
+
+/**
+ * بررسی موبایل + رمز. اگر کاربر وجود نداشته باشد هم یک مقایسهٔ bcrypt انجام می‌شود
+ * تا زمان پاسخ، وجود یا نبود شماره را لو ندهد.
+ */
+export async function verifyCredentials(mobile: string, password: string) {
+  const user = await prisma.user.findUnique({ where: { mobile } });
+  const hash = user?.passwordHash ?? (await (timingPad ??= bcrypt.hash("tabligram-timing-pad", BCRYPT_COST)));
+  const passwordOk = await bcrypt.compare(password, hash);
+  return user && passwordOk ? user : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* سشن                                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * ساخت سشن جدید و ست کوکی HttpOnly.
+ * - سشن قبلیِ همین مرورگر باطل می‌شود (جلوگیری از session fixation).
+ * - سشن‌های منقضی پاک می‌شوند و حداکثر ۱۰ سشن فعال برای هر کاربر می‌ماند.
+ */
+export async function createSession(userId: string): Promise<void> {
+  const jar = await cookies();
+  const previous = jar.get(SESSION_COOKIE)?.value;
+  if (previous) await prisma.session.deleteMany({ where: { tokenHash: hashToken(previous) } });
+  await prisma.session.deleteMany({ where: { userId, expiresAt: { lt: new Date() } } });
+  const surplus = await prisma.session.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    skip: MAX_SESSIONS_PER_USER - 1,
+    select: { id: true },
+  });
+  if (surplus.length) await prisma.session.deleteMany({ where: { id: { in: surplus.map((s) => s.id) } } });
+
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 864e5);
+  await prisma.session.create({ data: { userId, tokenHash: hashToken(token), expiresAt } });
+  jar.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: expiresAt,
+  });
+}
+
+export async function destroySession(): Promise<void> {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (token) {
+    await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } });
+    jar.delete(SESSION_COOKIE);
+  }
+}
+
+/** همهٔ سشن‌های یک کاربر را باطل می‌کند (تعلیق حساب، تغییر رمز). */
+export async function destroyUserSessions(userId: string): Promise<void> {
+  await prisma.session.deleteMany({ where: { userId } });
+}
+
+export interface SessionUser {
+  id: string;
+  name: string;
+  mobile: string;
+  role: Role; // USER یا ADMIN؛ نقش تبلیغ‌کننده/صاحب پیج از روی پروفایل‌ها مشتق می‌شود
+  status: UserStatus;
+  trustScore: number;
+  isAdmin: boolean;
+  isAdvertiser: boolean;
+  isPublisher: boolean;
+}
+
+/** کاربر لاگین‌شده از کوکی؛ در صورت نبود سشن معتبر یا حساب معلق، null. در هر رندر فقط یک‌بار کوئری می‌زند. */
+export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+
+  const session = await prisma.session.findUnique({
+    where: { tokenHash: hashToken(token) },
+    select: {
+      id: true,
+      expiresAt: true,
+      user: {
+        select: {
+          id: true, name: true, mobile: true, role: true, status: true, trustScore: true,
+          advertiserProfile: { select: { id: true } },
+          publisherProfile: { select: { id: true } },
+        },
+      },
+    },
+  });
+  if (!session) return null;
+  if (session.expiresAt < new Date()) {
+    await prisma.session.delete({ where: { id: session.id } }).catch(() => undefined);
+    return null;
+  }
+  const u = session.user;
+  if (u.status !== "ACTIVE") return null;
+  return {
+    id: u.id, name: u.name, mobile: u.mobile, role: u.role, status: u.status, trustScore: u.trustScore,
+    isAdmin: u.role === "ADMIN",
+    isAdvertiser: u.advertiserProfile !== null,
+    isPublisher: u.publisherProfile !== null,
+  };
+});
+
+/* ------------------------------------------------------------------ */
+/* کنترل دسترسی سمت سرور                                                */
+/* ------------------------------------------------------------------ */
+
+export async function requireUser(): Promise<SessionUser> {
+  const user = await getCurrentUser();
+  if (!user) throw new HttpError(401, "ابتدا وارد حساب خود شوید.");
+  return user;
+}
+
+export async function requireAdmin(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!user.isAdmin) throw new HttpError(403, "دسترسی لازم را ندارید.");
+  return user;
+}
+
+export async function requireAdvertiser(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!user.isAdvertiser) throw new HttpError(403, "برای این کار ابتدا پروفایل تبلیغ‌کننده بسازید.");
+  return user;
+}
+
+export async function requirePublisher(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!user.isPublisher) throw new HttpError(403, "برای این کار ابتدا پروفایل صاحب پیج بسازید.");
+  return user;
+}
+
+/** برای سازگاری با کدهای قبلی؛ فقط نقش‌های سیستمی (USER/ADMIN). */
+export async function requireRole(...roles: Role[]): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!roles.includes(user.role)) throw new HttpError(403, "دسترسی لازم را ندارید.");
+  return user;
+}
+// این تابع کاربر لاگین شده رو برمی‌گردونه یا ارور میده
+export async function requireAuth() {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (!token) throw new Error("UNAUTHORIZED");
+
+  const session = await prisma.session.findUnique({
+    where: { tokenHash: hashToken(token) },
+    include: { user: true }
+  });
+
+  if (!session || session.expiresAt < new Date()) {
+    throw new Error("UNAUTHORIZED");
+  }
+  
+  if (session.user.status !== "ACTIVE") {
+    throw new Error("FORBIDDEN");
+  }
+
+  return session.user;
+}
+
+
+========================================
+FILE: \lib\auth-rules.ts
+========================================
+
+// قوانین مشترک ورود/ثبت‌نام. هم در کلاینت (فرم) و هم در سرور (API) استفاده می‌شود؛
+// پس هیچ import سمت‌سروری در این فایل نیست. سرور همیشه دوباره اعتبارسنجی می‌کند.
+import { toLatinDigits } from "@/lib/utils";
+
+export const MIN_PASSWORD_LENGTH = 8;
+/** bcrypt فقط ۷۲ بایت اول رمز را در نظر می‌گیرد؛ حرف فارسی در UTF-8 دو بایت است. */
+export const MAX_PASSWORD_BYTES = 72;
+export const MOBILE_RE = /^09\d{9}$/;
+
+/** ارقام فارسی/عربی را لاتین می‌کند، فاصله و نیم‌فاصله را حذف و پیش‌شمارهٔ +98 را به 0 تبدیل می‌کند. */
+export const normalizeMobile = (s: string) =>
+  toLatinDigits(s)
+    .replace(/[\s\u200c-]/g, "")
+    .replace(/^(\+98|0098|98)(?=9\d{9}$)/, "0");
+
+export const isMobile = (s: string) => MOBILE_RE.test(s);
+
+export const normalizeName = (s: string) => s.replace(/\s+/g, " ").trim();
+
+export type AuthField = "name" | "mobile" | "password";
+export type AuthErrors = Partial<Record<AuthField, string>>;
+
+const byteLength = (s: string) => new TextEncoder().encode(s).length;
+
+/** مشکل رمز عبور برای ثبت‌نام؛ undefined یعنی قابل‌قبول. */
+export function passwordProblem(password: string, mobile = ""): string | undefined {
+  if (password.length < MIN_PASSWORD_LENGTH) return `رمز عبور باید حداقل ${MIN_PASSWORD_LENGTH} کاراکتر باشد.`;
+  if (byteLength(password) > MAX_PASSWORD_BYTES) return "رمز عبور بیش از حد طولانی است.";
+  if (/^\d+$/.test(toLatinDigits(password))) return "رمز عبور نباید فقط عدد باشد.";
+  if (mobile && toLatinDigits(password).includes(mobile)) return "رمز عبور نباید شمارهٔ موبایل شما باشد.";
+  return undefined;
+}
+
+/** در ورود قوانین رمز را فاش نمی‌کنیم؛ فقط خالی نبودن. */
+export function validateLogin(v: { mobile: string; password: string }): AuthErrors {
+  const e: AuthErrors = {};
+  if (!isMobile(v.mobile)) e.mobile = "شمارهٔ موبایل را به شکل ۰۹۱۲۱۲۳۴۵۶۷ وارد کنید.";
+  if (!v.password) e.password = "رمز عبور را وارد کنید.";
+  return e;
+}
+
+export function validateRegister(v: { name: string; mobile: string; password: string }): AuthErrors {
+  const e: AuthErrors = {};
+  if (v.name.length < 3) e.name = "نام و نام خانوادگی را وارد کنید.";
+  else if (v.name.length > 60) e.name = "نام حداکثر ۶۰ حرف باشد.";
+  if (!isMobile(v.mobile)) e.mobile = "شمارهٔ موبایل را به شکل ۰۹۱۲۱۲۳۴۵۶۷ وارد کنید.";
+  const pw = passwordProblem(v.password, v.mobile);
+  if (pw) e.password = pw;
+  return e;
+}
+
+
+
+========================================
+FILE: \package.json
+========================================
+
+{
+  "name": "tabligram",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "postinstall": "prisma generate",
+    "test": "vitest run"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/vazirmatn": "^5.3.0",
+    "@prisma/client": "^6.19.3",
+    "@radix-ui/react-dialog": "^1.3.1",
+    "bcryptjs": "^3.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^14.7.1",
+    "lucide-react": "^1.63.0",
+    "next": "^16.4.3",
+    "prisma": "^6.19.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.6.2",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^3.4.19",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
+
+
+
+========================================
+FILE: \prisma\schema.prisma
+========================================
+
+// تبلیگرام (Tabligram) — Schema کامل دیتابیس
+//
+// روند پول (مرحلهٔ اول: دستی):
+//  1) تبلیغ‌دهنده کارت‌به‌کارت به حساب پلتفرم واریز می‌کند و رسید ثبت می‌کند (Deposit).
+//  2) مدیر واریز را در بانک بررسی و تأیید می‌کند (VERIFIED).
+//  3) هر درخواست به یک پیج، بخشی از موجودی را بلوکه می‌کند (Hold).
+//  4) بعد از تأیید دوطرفه و گذشتن زمان حداقل ماندن پست، مدیر به صاحب پیج پرداخت می‌کند (PAID_OUT).
+// موجودی ذخیره نمی‌شود؛ همیشه محاسبه می‌شود:
+//   موجودی آزاد = جمع واریزهای تأییدشده − جمع بلوکه‌های غیر REFUNDED   (lib/money-rules.ts)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- کاربران و نقش‌ها ----------
+
+// نقش سیستمی. «تبلیغ‌کننده» و «صاحب پیج» نقش نیستند؛ قابلیت‌اند و از وجود
+// AdvertiserProfile / PublisherProfile مشتق می‌شوند (یک کاربر می‌تواند هر دو را داشته باشد).
+// ADMIN فقط از طریق seed یا ابزار داخلی ساخته می‌شود، هرگز از فرم ثبت‌نام.
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model User {
+  id            String     @id @default(cuid())
+  mobile        String     @unique // شماره موبایل، شناسه اصلی ورود
+  passwordHash  String
+  name          String
+  role          Role       @default(USER)
+  status        UserStatus @default(ACTIVE)
+  trustScore    Int        @default(50) // امتیاز اعتبار 0..100
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  advertiserProfile AdvertiserProfile?
+  publisherProfile  PublisherProfile?
+  pages             InstaPage[]
+  campaigns         Campaign[]
+  sessions          Session[]
+  notifications     Notification[]
+  deposits          Deposit[]
+  holds             Hold[]
+  reportsFiled      Report[]   @relation("Reporter")
+  reportsAgainst    Report[]   @relation("ReportedUser")
+  ratingsGiven      UserRating[] @relation("Rater")
+  ratingsReceived   UserRating[] @relation("Rated")
+  auditLogs         AuditLog[]
+  adminBanners      Banner[]   @relation("BannerAuthor")
+  adminActionReports Report[]  @relation("AdminResolver")
+
+  @@index([role])
+}
+
+model AdvertiserProfile {
+  id           String  @id @default(cuid())
+  userId       String  @unique
+  businessName String
+  website      String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// وضعیت بررسی هویت و کارت پرداخت صاحب پیج.
+enum PayoutVerification {
+  NONE      // هنوز اطلاعاتی ثبت نشده
+  PENDING   // ثبت شده، منتظر بررسی مدیر
+  VERIFIED  // مدیر تأیید کرد؛ فقط کارت تأییدشده برای پرداخت استفاده می‌شود
+  REJECTED  // مدیر رد کرد (دلیل در payoutRejectReason)
+}
+
+model PublisherProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  // شمارهٔ کارت به‌صورت رمزگذاری‌شده (AES-GCM با lib/crypto.ts) ذخیره می‌شود؛ هرگز خام.
+  // فقط مدیر در لحظهٔ پرداخت آن را رمزگشایی می‌بیند؛ صاحب پیج فقط ۴ رقم آخر را می‌بیند.
+  payoutCard     String?
+  payoutIban     String?
+  bio            String?
+  // اطلاعات هویتی برای تطبیق نام صاحب کارت
+  firstName          String?
+  lastName           String?
+  cardLast4          String?
+  // کد ملی رمزگذاری‌شده؛ فقط تا لحظهٔ تصمیم مدیر نگه داشته می‌شود و بعد پاک می‌شود.
+  nationalIdEnc      String?
+  payoutStatus       PayoutVerification @default(NONE)
+  payoutRejectReason String?
+  payoutSubmittedAt  DateTime?
+  payoutReviewedAt   DateTime?
+  payoutReviewedById String?   // شناسهٔ مدیر بررسی‌کننده (بدون کلید خارجی؛ لاگ کامل در AuditLog)
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------- صفحات اینستاگرام ----------
+
+enum PageStatus {
+  PENDING   // ثبت‌شده، در انتظار تأیید ادمین
+  APPROVED
+  REJECTED
+  DISABLED  // غیرفعال توسط ادمین
+}
+
+enum VerificationMethod {
+  GRAPH
+  BIO_CODE
+  MANUAL
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  AWAITING
+  VERIFIED
+}
+
+enum StatsSource {
+  SELF   // خوداظهاری صاحب پیج
+  API    // تأییدشده از Instagram Graph API
+}
+
+model InstaPage {
+  id            String             @id @default(cuid())
+  ownerId       String
+  handle        String             @unique // شناسه عمومی پیج = آیدی اینستاگرام (تا پذیرش درخواست مخفی است)
+  title         String
+  category      String
+  city          String?
+  bio           String?
+  followers     Int                @default(0)
+  avgStoryViews Int                @default(0)
+  avgPostViews  Int                @default(0)
+  avgReelsViews Int                @default(0)
+  // تعرفهٔ هر نوع انتشار به تومان؛ ۰ یعنی پیج آن نوع را ارائه نمی‌دهد.
+  priceStory    Int                @default(0)
+  pricePost     Int                @default(0)
+  priceReels    Int                @default(0)
+  status        PageStatus         @default(PENDING)
+  rejectReason  String?
+  avatarUrl     String?
+  statsSource   StatsSource        @default(SELF)
+  lastSyncAt    DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  owner           User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  verification    PageVerification?
+  instagramAccount InstagramAccount?
+  statsHistory    PageStatsSnapshot[]
+  orders          Order[]
+  reports         Report[]           @relation("ReportedPage")
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([category])
+}
+
+model PageVerification {
+  id          String             @id @default(cuid())
+  pageId      String             @unique
+  status      VerificationStatus @default(UNVERIFIED)
+  method      VerificationMethod?
+  code        String?  // کد موقت بیو
+  codeExpiresAt DateTime?
+  verifiedAt  DateTime?
+  note        String?
+
+  page InstaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+model InstagramAccount {
+  id                String   @id @default(cuid())
+  pageId            String   @unique
+  platformUserId    String   // ig user id از Graph API
+  accessTokenEnc    String   // توکن رمزگذاری‌شده (AES)، هرگز خام ذخیره نمی‌شود
+  tokenExpiresAt    DateTime?
+  connectedAt       DateTime @default(now())
+
+  page InstaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+model PageStatsSnapshot {
+  id        String   @id @default(cuid())
+  pageId    String
+  followers Int
+  avgViews  Int
+  reach     Int?
+  takenAt   DateTime @default(now())
+
+  page InstaPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, takenAt])
+}
+
+// ---------- کمپین‌ها و سفارش‌ها ----------
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+// گردش سفارش در روند جدید:
+//   REQUESTED → ACCEPTED → PUBLISHED → CONFIRMED → PAID_FULL
+//   شاخه‌ها: DECLINED، CANCELLED (لغو/انقضا)، DISPUTED (اختلاف)
+// مقدارهای NEGOTIATING / AGREED / PARTIALLY_PAID / IN_PROGRESS فعلاً استفاده نمی‌شوند و برای حفظ داده می‌مانند.
+enum OrderStatus {
+  REQUESTED        // درخواست ارسال‌شده به صاحب پیج (پول بلوکه شده)
+  ACCEPTED         // صاحب پیج پذیرفت؛ هویت دو طرف آشکار می‌شود
+  DECLINED
+  NEGOTIATING
+  AGREED
+  PARTIALLY_PAID
+  IN_PROGRESS
+  PUBLISHED        // مدرک انتشار ثبت شد
+  CONFIRMED        // تبلیغ‌کننده (یا مدیر پس از سکوت تبلیغ‌کننده) تأیید کرد
+  PAID_FULL        // مدیر به صاحب پیج پرداخت کرد
+  DISPUTED
+  CANCELLED
+}
+
+// روند قدیمی «پرداخت مستقیم»؛ فعلاً استفاده نمی‌شود و حذف هم نشده تا داده‌ها حفظ شوند.
+enum PaymentStage {
+  STAGE1
+  STAGE2
+}
+
+enum PaymentStatus {
+  DECLARED
+  CONFIRMED
+  REJECTED
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  orderNumber String         @unique
+  advertiserId String
+  title       String
+  business    String         // تا پذیرش درخواست از صاحب پیج مخفی است
+  description String
+  link        String         // تا پذیرش درخواست از صاحب پیج مخفی است
+  mediaUrl    String?
+  mediaKind   String?        // image | video
+  budget      Int            // تومان
+  minFollowers Int?
+  targetViews Int?
+  category    String?
+  city        String?
+  notes       String?
+  publishType String         // قدیمی: نوع اول؛ مرجع اصلی publishTypes است
+  // نوع‌های انتخاب‌شده، جداشده با کاما؛ مثل "story,post,reels"
+  publishTypes String        @default("")
+  publishAt   DateTime?      // زمان انتشار موردنظر
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  advertiser User      @relation(fields: [advertiserId], references: [id])
+  orders     Order[]
+
+  @@index([advertiserId])
+  @@index([status])
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  campaignId  String
+  pageId      String
+  amount      Int         // مبلغ همین انتشار (تعرفهٔ پیج برای نوع انتخاب‌شده)، تومان
+  publishType String      // story | post | reels (برای هر پیج در هر کمپین یک نوع)
+  publishAt   DateTime?
+  terms       String?
+  status      OrderStatus @default(REQUESTED)
+  // زمان‌بندی و آشکارسازی هویت
+  respondByAt           DateTime?  // مهلت پاسخ صاحب پیج
+  revealedAt            DateTime?  // لحظهٔ پذیرش؛ تا قبل از آن هویت دو طرف مخفی است
+  publishDeadlineAt     DateTime?  // مهلت انتشار بعد از پذیرش
+  proofSubmittedAt      DateTime?
+  advertiserConfirmedAt DateTime?
+  closedReason          String?    // DECLINED_BY_OWNER | REQUEST_EXPIRED | PUBLISH_EXPIRED | CANCELLED_BY_ADVERTISER | DISPUTE_REFUND
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  campaign  Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  page      InstaPage @relation(fields: [pageId], references: [id])
+  hold      Hold?
+  payments  Payment[]
+  proofs    OrderProof[]
+  disputes  Report[] @relation("DisputeOrder")
+
+  @@unique([campaignId, pageId])
+  @@index([pageId])
+  @@index([status])
+}
+
+// ---------- پول: واریز و بلوکه ----------
+
+enum DepositStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// واریز تبلیغ‌دهنده به حساب پلتفرم (کارت‌به‌کارت). فقط VERIFIED در موجودی حساب می‌شود.
+model Deposit {
+  id           String        @id @default(cuid())
+  userId       String        // تبلیغ‌دهنده
+  amount       Int           // تومان
+  reference    String        // شمارهٔ پیگیری رسید بانکی
+  receiptUrl   String?       // تصویر رسید
+  note         String?
+  status       DepositStatus @default(PENDING)
+  rejectReason String?
+  reviewedById String?       // شناسهٔ مدیر (بدون کلید خارجی؛ لاگ کامل در AuditLog)
+  reviewedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([reference])
+}
+
+enum HoldStatus {
+  HELD        // بلوکه
+  PAYOUT_DUE  // تأیید دوطرفه انجام شد؛ منتظر پرداخت مدیر (بعد از payoutDueAt)
+  PAID_OUT    // مدیر پرداخت کرد و شمارهٔ پیگیری را ثبت کرد
+  REFUNDED    // به موجودی تبلیغ‌دهنده برگشت
+  DISPUTED    // منجمد تا تصمیم مدیر
+}
+
+// بلوکهٔ پول یک سفارش؛ برای هر سفارش حداکثر یکی.
+model Hold {
+  id              String     @id @default(cuid())
+  orderId         String     @unique
+  advertiserId    String
+  amount          Int
+  status          HoldStatus @default(HELD)
+  heldAt          DateTime   @default(now())
+  payoutDueAt     DateTime?  // زودترین زمانی که مدیر مجاز به پرداخت است
+  payoutReference String?    // شمارهٔ پیگیری پرداخت مدیر به صاحب پیج
+  paidOutAt       DateTime?
+  paidOutById     String?    // شناسهٔ مدیر (بدون کلید خارجی؛ لاگ کامل در AuditLog)
+  refundedAt      DateTime?
+  refundReason    String?
+  disputedAt      DateTime?
+  disputeNote     String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  order      Order @relation(fields: [orderId], references: [id])
+  advertiser User  @relation(fields: [advertiserId], references: [id])
+
+  @@index([advertiserId, status])
+  @@index([status, payoutDueAt])
+}
+
+// روند قدیمی «پرداخت مستقیم»؛ فعلاً استفاده نمی‌شود و حذف نشده تا داده‌ها حفظ شوند.
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String
+  stage          PaymentStage
+  amount         Int
+  method         String        // کارت به کارت | درگاه اختصاصی صاحب پیج | ...
+  reference      String?       // شماره پیگیری تراکنش / شماره‌ی درگاه
+  receiptUrl     String?       // لینک یا نام فایل رسید
+  declaredAt     DateTime      @default(now()) // زمان اعلام پرداخت توسط تبلیغ‌کننده
+  status         PaymentStatus @default(DECLARED)
+  confirmedAt    DateTime?
+  confirmedByPage Boolean?     // true = تأیید صاحب پیج
+  note           String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, stage])
+  @@index([status])
+}
+
+model OrderProof {
+  id        String   @id @default(cuid())
+  orderId   String
+  kind      String   @default("POST_LINK") // POST_LINK | STATS_SCREENSHOT
+  proofUrl  String
+  caption   String?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// ---------- امتیازدهی و اعتبار ----------
+
+model UserRating {
+  id        String   @id @default(cuid())
+  raterId   String
+  ratedId   String
+  orderId   String?
+  stars     Int      // 1..5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  rater User @relation("Rater", fields: [raterId], references: [id])
+  rated User @relation("Rated", fields: [ratedId], references: [id])
+
+  @@unique([raterId, orderId])
+  @@index([ratedId])
+}
+
+// ---------- گزارش تخلف و اختلاف ----------
+
+enum ReportKind {
+  PAGE_ABUSE
+  ORDER_DISPUTE
+  USER_ABUSE
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model Report {
+  id         String       @id @default(cuid())
+  kind       ReportKind
+  reporterId String?
+  reportedUserId String?
+  reportedPageId String?
+  disputeOrderId String?
+  subject    String
+  body       String
+  status     ReportStatus @default(OPEN)
+  resolution String?
+  resolvedById String?
+  resolvedAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  reporter      User?     @relation("Reporter", fields: [reporterId], references: [id])
+  reportedUser  User?     @relation("ReportedUser", fields: [reportedUserId], references: [id])
+  reportedPage  InstaPage? @relation("ReportedPage", fields: [reportedPageId], references: [id])
+  disputeOrder  Order?    @relation("DisputeOrder", fields: [disputeOrderId], references: [id])
+  resolvedBy    User?     @relation("AdminResolver", fields: [resolvedById], references: [id])
+
+  @@index([status])
+  @@index([kind])
+}
+
+// ---------- بنرهای تبلیغاتی سایت (CMS) ----------
+
+enum BannerPlacement {
+  HERO        // اسلایدر صفحه اصلی
+  SIDEBAR
+  FOOTER
+  PAGES_TOP   // بالای دایرکتوری پیج‌ها
+}
+
+model Banner {
+  id           String          @id @default(cuid())
+  title        String
+  description  String?
+  link         String
+  desktopImage String?
+  mobileImage  String?
+  placement    BannerPlacement @default(HERO)
+  sortOrder    Int             @default(0)
+  isActive     Boolean         @default(true)
+  startsAt     DateTime?
+  endsAt       DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  createdById  String?
+
+  createdBy User? @relation("BannerAuthor", fields: [createdById], references: [id])
+
+  @@index([placement, sortOrder, isActive])
+}
+
+// ---------- اعلان‌ها ----------
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+// ---------- گزارش فعالیت‌های مدیریتی (Audit Log) ----------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String   // مثلا PAGE_APPROVE, BANNER_CREATE, DEPOSIT_VERIFY, HOLD_PAYOUT, HOLD_REFUND
+  entity    String
+  entityId  String
+  meta      String?  // JSON
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([actorId])
+}

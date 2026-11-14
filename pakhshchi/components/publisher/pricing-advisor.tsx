@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ownedPages } from "@/lib/pages";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatNumber, formatToman } from "@/lib/utils";
 import { BUNDLE_TIERS, bundleFor, bundlePrice, isSmallPage, pageCpm, SMALL_PAGE_THRESHOLD, suggestedPrice } from "@/lib/pricing";
 import { PUBLISH_TYPES } from "@/lib/constants";

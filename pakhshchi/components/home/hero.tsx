@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { MotionConfig, motion, type Variants } from "framer-motion";
 import { Film, ImageIcon, Layers } from "lucide-react";
-import { AdBannerCarousel } from "@/components/home/ad-banner-carousel";
+import { HeroBannerCarousel } from "@/components/home/hero-banner-carousel";
 import { InstagramBackdrop } from "@/components/home/instagram-backdrop";
 import { PagesMarquee } from "@/components/home/pages-marquee";
 import { buttonVariants } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export function Hero() {
               {WORDS.map((w, i) => <motion.span key={i} variants={word} className="me-[0.28em] inline-block">{w}</motion.span>)}
             </motion.h1>
             <motion.p initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55, duration: 0.6, ease: EASE }} className="mx-auto max-w-2xl text-lg leading-9 text-slate-700">
-              سفارش تبلیغ را یک‌بار ثبت کنید. پخش‌چی پیج‌های مرتبط را پیشنهاد می‌دهد و انتشار هر پیج را تا ارائهٔ مدرک دنبال می‌کند.
+              سفارش تبلیغ را یک‌بار ثبت کنید. تبلیگرام پیج‌های مرتبط را پیشنهاد می‌دهد و انتشار هر پیج را تا ارائهٔ مدرک دنبال می‌کند.
             </motion.p>
             <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7, duration: 0.6, ease: EASE }} className="flex flex-wrap justify-center gap-3">
               <motion.div whileHover={{ y: -2 }} whileTap={{ scale: 0.97 }}>
@@ -50,7 +50,7 @@ export function Hero() {
           </div>
 
           <motion.div initial={{ opacity: 0, y: 40, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.85, duration: 0.8, ease: EASE }} className="mt-12">
-            <AdBannerCarousel />
+            <HeroBannerCarousel />
           </motion.div>
           <PagesMarquee />
         </div>

@@ -14,7 +14,7 @@ import { PageAvatar, pageTitle, StatsSourceNote } from "@/components/shared/page
 import { APPROVAL_STATUS, typeLabel } from "@/lib/constants";
 import { categoryLabel } from "@/lib/categories";
 import { ownedPages } from "@/lib/pages";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatNumber, formatToman } from "@/lib/utils";
 import type { InstaPage } from "@/types";
 import { PageEditDialog } from "@/components/publisher/page-edit-dialog";

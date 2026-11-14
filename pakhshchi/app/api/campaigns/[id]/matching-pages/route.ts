@@ -1,97 +1,48 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { withErrors } from "@/lib/api";
 import { affordableTypes } from "@/lib/money-rules";
-import type { PagePublishType } from "@/lib/page-rules";
+import { campaignTypes } from "@/lib/campaign-rules";
+import { toMarketPage } from "@/lib/public-dto";
+
+export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(req: Request, { params }: Ctx) {
-  try {
-    const user = await requireAuth();
+/** پیج‌های واجد شرایط این کمپین با نوع‌های مقرون‌به‌صرفه؛ فقط صاحب کمپین. */
+export async function GET(_req: Request, { params }: Ctx) {
+  return withErrors(async () => {
+    const user = await requireUser();
     const { id } = await params;
 
-    // 1. گرفتن کمپین
-    const campaign = await prisma.campaign.findUnique({
-      where: { id, advertiserId: user.id }
-    });
-    if (!campaign) {
-      return NextResponse.json({ error: "کمپین یافت نشد." }, { status: 404 });
-    }
+    const campaign = await prisma.campaign.findFirst({ where: { id, advertiserId: user.id } });
+    if (!campaign) return NextResponse.json({ error: "کمپین پیدا نشد." }, { status: 404 });
 
-    // 2. بودجه باقی‌مانده
-    const activeHolds = await prisma.hold.aggregate({
-      where: {
-        order: { campaignId: campaign.id },
-        status: { not: "REFUNDED" }
-      },
-      _sum: { amount: true }
+    const blocked = await prisma.hold.findMany({
+      where: { order: { campaignId: campaign.id }, status: { not: "REFUNDED" } },
+      select: { amount: true },
     });
-    const remainingBudget = campaign.budget - (activeHolds._sum.amount || 0);
-
-    // 3. گرفتن پیج‌ها
+    const remainingBudget = Math.max(0, campaign.budget - blocked.reduce((s, h) => s + h.amount, 0));
     const pages = await prisma.instaPage.findMany({
-      where: { status: "APPROVED" }
+      where: { status: "APPROVED", ...(campaign.category ? { category: campaign.category } : {}) },
+      select: {
+        id: true, handle: true, url: true, title: true, category: true, city: true, bio: true,
+        followers: true, avgStoryViews: true, avgPostViews: true, avgReelsViews: true,
+        priceStory: true, pricePost: true, priceReels: true, avatarUrl: true,
+        verification: { select: { status: true } },
+        orders: { where: { status: "PAID_FULL" }, select: { id: true } },
+      },
     });
 
-    // 4. گرفتن تعداد سفارش‌های موفق (با چک کردن خالی نبودن)
-    let completedMap = new Map();
-    if (pages.length > 0) {
-      const paidOrders = await prisma.order.groupBy({
-        by: ['pageId'],
-        where: {
-          pageId: { in: pages.map(p => p.id) },
-          status: "PAID_FULL"
-        },
-        _count: { _all: true }
-      });
-      completedMap = new Map(paidOrders.map(o => [o.pageId, o._count._all]));
-    }
+    const types = campaignTypes(campaign);
+    const result = pages
+      .filter((page) => affordableTypes(page, types, remainingBudget, page.orders.length).length > 0)
+      .map((page) => ({
+        ...toMarketPage(page),
+        availableTypes: affordableTypes(page, types, remainingBudget, page.orders.length),
+      }));
 
-    // 5. نوع‌های انتشار
-    const campaignTypes = (campaign.publishTypes || "").split(",").filter(Boolean) as PagePublishType[];
-
-    // 6. فیلتر کردن
-    const result: any[] = [];
-    for (const page of pages) {
-      const ownerCompletedOrders = completedMap.get(page.id) || 0;
-      
-      if (campaign.category && campaign.category.length > 0 && page.category !== campaign.category) {
-        continue;
-      }
-
-      // اینجا ممکن است خطا بدهد
-      const types = affordableTypes(page, campaignTypes, remainingBudget, ownerCompletedOrders);
-      
-      if (types.length === 0) continue;
-
-      result.push({
-        id: page.id,
-        title: page.title,
-        category: page.category,
-        city: page.city,
-        followers: page.followers,
-        avgStoryViews: page.avgStoryViews,
-        avgPostViews: page.avgPostViews,
-        avgReelsViews: page.avgReelsViews,
-        priceStory: page.priceStory,
-        pricePost: page.pricePost,
-        priceReels: page.priceReels,
-        avatarUrl: page.avatarUrl,
-        availableTypes: types,
-        isCategoryMatch: campaign.category === page.category
-      });
-    }
-
-    return NextResponse.json(result);
-
-  } catch (error: any) {
-    // 🚨 اینجا خطای واقعی را با جزئیات کامل برمی‌گردانیم
-    console.error("DEBUG ERROR in matching-pages:", error);
-    return NextResponse.json({ 
-      error: "خطای دیباگ", 
-      message: error.message, 
-      stack: error.stack 
-    }, { status: 500 });
-  }
+    return NextResponse.json({ campaignId: campaign.id, remainingBudget, types, pages: result });
+  });
 }

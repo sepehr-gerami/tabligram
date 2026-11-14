@@ -1,71 +1,78 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { withErrors } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
-import { nextStep } from "@/lib/money-rules";
+import { HttpError, requireUser } from "@/lib/auth";
+import { assertSameOrigin, clientIp, readJson, tooManyRequests, withErrors } from "@/lib/api";
+import { hit } from "@/lib/rate-limit";
+import { nextStep, type Actor } from "@/lib/money-rules";
+import { commitOrderStep, notify } from "@/lib/order-transition";
+import type { PagePublishType } from "@/lib/page-rules";
+
+export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/** تأیید نشر توسط تبلیغ‌دهنده؛ بلوکه به «نوبت پرداخت» می‌رود (هنوز پرداخت نشده). */
 export async function POST(req: Request, { params }: Ctx) {
   return withErrors(async () => {
-    const user = await requireAuth();
+    assertSameOrigin(req);
+    const user = await requireUser();
     const { id } = await params;
+
+    const limited = hit(`order:confirm:${user.id}`, 120, 60 * 60_000);
+    if (!limited.ok) return tooManyRequests(limited.retryAfterSec);
 
     const order = await prisma.order.findUnique({
       where: { id },
-      include: { hold: true, campaign: true, page: true }
+      include: {
+        hold: true,
+        campaign: { select: { advertiserId: true } },
+        page: { select: { ownerId: true } },
+      },
     });
+    if (!order) return NextResponse.json({ error: "سفارش پیدا نشد." }, { status: 404 });
+    if (order.campaign.advertiserId !== user.id) throw new HttpError(403, "این سفارش متعلق به شما نیست.");
 
-    if (!order) return NextResponse.json({ error: "سفارش یافت نشد." }, { status: 404 });
-    if (order.campaign.advertiserId !== user.id) return NextResponse.json({ error: "دسترسی غیرمجاز." }, { status: 403 });
-
-    // گرفتن تعداد سفارش‌های موفق صاحب پیج (برای قانون تازه‌واردها)
     const ownerCompletedOrders = await prisma.order.count({
-      where: { pageId: order.pageId, status: "PAID_FULL" }
+      where: { pageId: order.pageId, status: "PAID_FULL" },
     });
 
     const now = new Date();
-    const stepResult = nextStep({
+    const step = nextStep({
       action: "confirm",
-      actor: "ADVERTISER",
+      actor: "ADVERTISER" as Actor,
       now,
       order: {
         status: order.status,
-        publishType: order.publishType as "story" | "post" | "reels",
+        publishType: order.publishType as PagePublishType,
         respondByAt: order.respondByAt,
         publishDeadlineAt: order.publishDeadlineAt,
         proofSubmittedAt: order.proofSubmittedAt,
       },
       hold: order.hold,
-      ownerCompletedOrders
+      ownerCompletedOrders,
+    });
+    if (!step.ok) throw new HttpError(400, step.error);
+
+    await commitOrderStep({
+      orderId: order.id,
+      expectedOrderStatus: order.status,
+      holdId: order.hold?.id ?? null,
+      expectedHoldStatus: order.hold?.status ?? null,
+      step,
+      now,
+      orderData: { advertiserConfirmedAt: now },
+      extra: (tx) =>
+        notify(
+          tx,
+          order.page.ownerId,
+          "نشر تبلیغ تأیید شد",
+          "تبلیغ‌دهنده نشر را تأیید کرد. مبلغ خالص شما پس از پایان مهلت قانونی قابل پرداخت می‌شود.",
+        ),
     });
 
-    if (!stepResult.ok) {
-      return NextResponse.json({ error: stepResult.error }, { status: 400 });
-    }
-
-    await prisma.$transaction(async (tx) => {
-      // 1. آپدیت سفارش به CONFIRMED
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          status: stepResult.orderStatus,
-          advertiserConfirmedAt: now,
-        }
-      });
-
-      // 2. آپدیت بلوکه به PAYOUT_DUE (یعنی پول هنوز بلوکه است اما نوبت پرداخت شده)
-      if (order.hold) {
-        await tx.hold.update({
-          where: { id: order.hold.id },
-          data: {
-            status: stepResult.holdStatus,
-            payoutDueAt: stepResult.payoutDueAt,
-          }
-        });
-      }
+    return NextResponse.json({
+      message: "تأیید شد. مبلغ پس از پایان مهلت قانونی به صاحب پیج پرداخت می‌شود.",
+      status: step.orderStatus,
     });
-
-    return NextResponse.json({ message: "تایید شد. مبلغ پس از پایان زمان قانونی به صاحب پیج پرداخت می‌شود." });
   });
 }

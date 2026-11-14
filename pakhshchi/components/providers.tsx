@@ -1,13 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { StoreProvider } from "@/lib/store";
+import { AuthProvider, type ClientUser } from "@/components/auth/auth-provider";
 import { ToastProvider } from "@/components/ui/toast";
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ children, user }: { children: ReactNode; user: ClientUser | null }) {
   return (
-    <StoreProvider>
-      <ToastProvider>{children}</ToastProvider>
-    </StoreProvider>
+    <ToastProvider>
+      <AuthProvider initialUser={user}>{children}</AuthProvider>
+    </ToastProvider>
   );
 }

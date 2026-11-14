@@ -5,7 +5,7 @@ import { StatCard } from "@/components/shared/stat-card";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { MAX_PAGES_PER_OWNER } from "@/lib/constants";
 import { ownedPages } from "@/lib/pages";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatNumber, formatToman } from "@/lib/utils";
 
 export function SummaryCards() {

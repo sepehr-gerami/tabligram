@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { OFFER_STATUS, typeLabel } from "@/lib/constants";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatDate, formatToman } from "@/lib/utils";
 import type { Offer } from "@/types";
 

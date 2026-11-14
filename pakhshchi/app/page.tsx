@@ -1,7 +1,7 @@
 import { Hero } from "@/components/home/hero";
 import { Benefits } from "@/components/home/benefits";
 import { HowItWorks } from "@/components/home/how-it-works";
-import { SamplePages } from "@/components/home/sample-pages";
+import { MarketPages } from "@/components/home/market-pages";
 import { CtaBanner } from "@/components/home/cta-banner";
 
 export default function HomePage() {
@@ -10,7 +10,7 @@ export default function HomePage() {
       <Hero />
       <Benefits />
       <HowItWorks />
-      <SamplePages />
+      <MarketPages />
       <CtaBanner />
     </>
   );

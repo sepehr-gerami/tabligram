@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/misc";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 
 /** Shows a skeleton until saved demo data has been read from localStorage. */
 export function ReadyGate({ children, rows = 3 }: { children: ReactNode; rows?: number }) {

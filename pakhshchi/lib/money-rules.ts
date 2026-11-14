@@ -9,6 +9,14 @@ export type HoldStatusValue = "HELD" | "PAYOUT_DUE" | "PAID_OUT" | "REFUNDED" | 
 export type OrderStatusValue =
   | "REQUESTED" | "ACCEPTED" | "DECLINED" | "PUBLISHED" | "CONFIRMED" | "PAID_FULL" | "DISPUTED" | "CANCELLED";
 
+/**
+ * کلید تست سریع: فقط وقتی NODE_ENV برابر production نباشد و متغیر محیطی TABLIGRAM_FAST_PAYOUT=1 باشد،
+ * تأخیر «حداقل زمان ماندن» و تأخیر صاحب پیج تازه‌وارد صفر می‌شود تا کل چرخه (انتخاب تا پرداخت) در چند دقیقه
+ * قابل تست باشد. در production این کلید هیچ اثری ندارد.
+ */
+const FAST_PAYOUT =
+  typeof process !== "undefined" && process.env.NODE_ENV !== "production" && process.env.TABLIGRAM_FAST_PAYOUT === "1";
+
 /** عددهای سیاست‌گذاری؛ برای تغییر، فقط همین‌جا را عوض کن. */
 export const POLICY = {
   /** مهلت پاسخ صاحب پیج به درخواست */
@@ -18,9 +26,9 @@ export const POLICY = {
   /** مهلت تأیید تبلیغ‌دهنده بعد از ثبت مدرک؛ بعد از آن مدیر می‌تواند تصمیم بگیرد */
   advertiserConfirmHours: 72,
   /** حداقل زمان ماندن انتشار قبل از پرداخت (استوری به‌طور طبیعی ۲۴ ساعت می‌ماند) */
-  minLiveHours: { story: 24, post: 72, reels: 72 } as Record<PagePublishType, number>,
+  minLiveHours: (FAST_PAYOUT ? { story: 0, post: 0, reels: 0 } : { story: 24, post: 72, reels: 72 }) as Record<PagePublishType, number>,
   /** صاحب پیج «تازه‌وارد» تا این تعداد سفارش پرداخت‌شده: تأخیر بیشتر و سقف مبلغ */
-  newOwner: { orders: 3, extraDelayHours: 72, maxAmount: 1_500_000 },
+  newOwner: { orders: 3, extraDelayHours: FAST_PAYOUT ? 0 : 72, maxAmount: 1_500_000 },
   /** حداقل و حداکثر مبلغ هر واریز */
   deposit: { min: 100_000, max: 1_000_000_000 },
 };

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>banner design</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #111; }
+  #banner {
+    position: relative;
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    background:
+      radial-gradient(900px 500px at 12% 120%, rgba(236, 72, 153, .55), transparent 60%),
+      radial-gradient(700px 480px at 90% -20%, rgba(168, 85, 247, .65), transparent 65%),
+      linear-gradient(135deg, #2e1065 0%, #6b21a8 45%, #be185d 100%);
+    color: #fff;
+    font-family: Tahoma, "Segoe UI", Arial, sans-serif;
+  }
+  .dots {
+    position: absolute; inset: 0; opacity: .13;
+    background-image: radial-gradient(#fff 1.4px, transparent 1.4px);
+    background-size: 26px 26px;
+  }
+  .glow {
+    position: absolute; width: 520px; height: 520px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,.24), transparent 65%);
+    filter: blur(10px);
+  }
+  .glow.a { top: -220px; left: -120px; }
+  .glow.b { bottom: -260px; right: 280px; }
+  .content {
+    position: absolute; top: 0; right: 0; height: 100%;
+    width: 700px; padding: 62px 76px 56px;
+    display: flex; flex-direction: column; justify-content: center; gap: 18px;
+    z-index: 3;
+  }
+  .pill {
+    align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 9px 18px; border-radius: 999px;
+    background: rgba(255,255,255,.16);
+    border: 1px solid rgba(255,255,255,.28);
+    font-size: 20px; font-weight: 700;
+    backdrop-filter: blur(8px);
+  }
+  h1 {
+    margin: 0; font-size: 96px; line-height: 1.05; font-weight: 900;
+    letter-spacing: -2px;
+    text-shadow: 0 12px 40px rgba(0,0,0,.28);
+  }
+  .sub {
+    margin: 0; font-size: 27px; line-height: 1.75; color: rgba(255,255,255,.92);
+    max-width: 560px;
+  }
+  .row { display: flex; align-items: center; gap: 14px; margin-top: 6px; flex-wrap: wrap; }
+  .code {
+    display: inline-flex; align-items: center; gap: 12px;
+    background: #fff; color: #4c1d95;
+    border-radius: 16px; padding: 12px 20px;
+    font-size: 22px; font-weight: 800;
+    box-shadow: 0 16px 40px rgba(0,0,0,.25);
+  }
+  .code b { font-size: 28px; letter-spacing: 2px; }
+  .handle {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 11px 18px; border-radius: 999px;
+    background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.3);
+    font-size: 23px; font-weight: 700; direction: ltr;
+    backdrop-filter: blur(8px);
+  }
+  .ring {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: linear-gradient(45deg, #f9ce34, #ee2a7b, #6228d7);
+    display: grid; place-items: center;
+  }
+  .ring i { width: 26px; height: 26px; border-radius: 50%; background: #fff; display: block; }
+  .phone-wrap {
+    position: absolute; left: 72px; top: 48px; z-index: 2;
+    transform: rotate(-6deg);
+    filter: drop-shadow(0 34px 60px rgba(0,0,0,.4));
+  }
+  .phone {
+    width: 300px; height: 560px; border-radius: 46px;
+    background: #0b0b12; padding: 12px;
+    border: 2px solid rgba(255,255,255,.32);
+  }
+  .screen {
+    position: relative; width: 100%; height: 100%; border-radius: 36px; overflow: hidden;
+    background:
+      radial-gradient(320px 240px at 80% 0%, rgba(255,255,255,.35), transparent 60%),
+      linear-gradient(160deg, #7c3aed 0%, #db2777 60%, #f97316 100%);
+  }
+  .story-top { display: flex; align-items: center; gap: 10px; padding: 22px 18px; }
+  .avatar {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: linear-gradient(45deg, #f9ce34, #ee2a7b, #6228d7);
+    display: grid; place-items: center;
+  }
+  .avatar i { width: 36px; height: 36px; border-radius: 50%; background: #fff; display: block; }
+  .story-name { font-size: 16px; font-weight: 700; direction: ltr; }
+  .story-sub { font-size: 11px; color: rgba(255,255,255,.8); direction: ltr; }
+  .story-body {
+    position: absolute; inset: 96px 18px 110px;
+    border-radius: 24px; background: rgba(0,0,0,.2);
+    border: 1px solid rgba(255,255,255,.22);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; text-align: center; padding: 22px;
+  }
+  .story-body .big { font-size: 34px; font-weight: 900; line-height: 1.35; }
+  .story-body .small { font-size: 16px; color: rgba(255,255,255,.88); line-height: 1.8; }
+  .story-body .tag { margin-top: 4px; font-size: 15px; font-weight: 800; padding: 7px 14px; border-radius: 999px; background: #fff; color: #7c3aed; }
+  .story-foot { position: absolute; left: 18px; right: 18px; bottom: 22px; display: flex; align-items: center; gap: 8px; }
+  .story-foot .line { height: 3px; flex: 1; border-radius: 3px; background: rgba(255,255,255,.85); }
+  .story-foot .send { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4); display: grid; place-items: center; font-size: 16px; }
+  .badge {
+    position: absolute; left: 330px; top: 520px; z-index: 4;
+    background: #fff; color: #4c1d95; border-radius: 18px;
+    padding: 14px 22px; font-size: 20px; font-weight: 900;
+    box-shadow: 0 18px 40px rgba(0,0,0,.28);
+    transform: rotate(-3deg);
+  }
+</style>
+</head>
+<body>
+  <div id="banner" role="img" tabindex="0" aria-label="بنر تبلیغاتی تخفیف ویژه تبلیگرام">
+    <div class="dots"></div>
+    <div class="glow a"></div>
+    <div class="glow b"></div>
+
+    <div class="content">
+      <span class="pill">✦ پیشنهاد ویژه تبلیگرام</span>
+      <h1>تخفیف ویژه</h1>
+      <p class="sub">اولین کمپین تبلیغاتی خود را با ۲۰٪ تخفیف ثبت کنید و انتشار را در چندین پیج اینستاگرام دنبال کنید.</p>
+      <div class="row">
+        <span class="code">کد تخفیف: <b>TECH20</b></span>
+        <span class="handle"><span class="ring"><i></i></span>@tech_negar</span>
+      </div>
+    </div>
+
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="screen">
+          <div class="story-top">
+            <span class="avatar"><i></i></span>
+            <div>
+              <div class="story-name">tech_negar</div>
+              <div class="story-sub">sponsored story</div>
+            </div>
+          </div>
+          <div class="story-body">
+            <div class="big">استوری<br />تبلیغاتی</div>
+            <div class="small">دیده شدن برند شما در پیج‌های تخصصی</div>
+            <div class="tag">همین حالا شروع کن</div>
+          </div>
+          <div class="story-foot">
+            <span class="line"></span>
+            <span class="send">➤</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="badge">۱۰٪ کمیسیون شفاف پلتفرم</div>
+  </div>
+</body>
+</html>

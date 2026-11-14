@@ -46,6 +46,27 @@ export function storedBannerName(url: string): string | null {
   return m ? m[1] : null;
 }
 
+/** تصاویر آپلود کاربران (کراتیو کمپین/مدرک انتشار) در مسیر جدا و با همان نام‌گذاری امن. */
+export const uploadImageUrl = (name: string): string => `/api/files/uploads/${name}`;
+
+const UPLOAD_URL_RE = /^\/api\/files\/uploads\/([a-f0-9]{32}\.(?:png|jpg|webp))$/;
+
+export function storedUploadName(url: string): string | null {
+  const m = UPLOAD_URL_RE.exec(url);
+  return m ? m[1] : null;
+}
+
+/** هر آدرس تصویر مجاز: فایل آپلودشدهٔ خود سایت یا URL کامل https/http. */
+export function isSafeImageUrl(url: string): boolean {
+  if (storedUploadName(url) !== null) return true;
+  try {
+    const u = new URL(url);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.hostname.includes(".");
+  } catch {
+    return false;
+  }
+}
+
 export const imageTypeOfName = (name: string): ImageType | null => {
   if (!isStoredName(name)) return null;
   return EXT_IMAGE_TYPE[name.slice(name.lastIndexOf(".") + 1)] ?? null;

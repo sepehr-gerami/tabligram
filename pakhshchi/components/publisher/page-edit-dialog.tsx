@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { CATEGORIES } from "@/lib/categories";
 import { PUBLISH_TYPES } from "@/lib/constants";
 import { pageTitle } from "@/components/shared/page-card";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { cn, formatNumber, formatToman, parseAmount } from "@/lib/utils";
 import { validatePage, type Errors, type PageField, type PageValues } from "@/lib/validation";
 import type { CategoryId, InstaPage, PublishType } from "@/types";

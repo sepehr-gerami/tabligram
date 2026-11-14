@@ -1,277 +1,338 @@
 "use client";
 
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
-import { Loader2, Paperclip, Send, X } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { CheckCircle2, ImagePlus, Loader2, Send, Wallet, X } from "lucide-react";
 import { Alert } from "@/components/ui/misc";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, describe } from "@/components/ui/field";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { CampaignPreview } from "@/components/campaigns/campaign-preview";
-import { OrderSuccess } from "@/components/campaigns/order-success";
-import { PageCard } from "@/components/shared/page-card";
-import { PageDetailDialog } from "@/components/shared/page-detail-dialog";
-import { advertiserPages, pagePrice } from "@/lib/pages";
-import { ACCEPTED_MEDIA, CATEGORIES, MAX_FILE_MB, PUBLISH_TYPES, typeLabel } from "@/lib/constants";
-import { useStore } from "@/lib/store";
-import { cn, formatBytes, formatNumber, formatToman, makeId, parseAmount, toLatinDigits } from "@/lib/utils";
-import { validateCampaign, validateMedia, type CampaignField, type CampaignValues, type Errors } from "@/lib/validation";
-import type { CategoryId, InstaPage, PublishType } from "@/types";
+import { useSession } from "@/components/auth/auth-provider";
+import { CATEGORIES, categoryLabel } from "@/lib/categories";
+import { CAMPAIGN_LIMITS, parseCampaignInput, type CampaignErrors } from "@/lib/campaign-rules";
+import { typeLabel } from "@/lib/constants";
+import { cn, formatBytes, formatNumber, formatToman, parseAmount } from "@/lib/utils";
+import type { PublishType } from "@/types";
 
-/** Narrows the optional selects after validation; the submit guard has already rejected empty values. */
-const isPublishType = (v: CampaignValues["publishType"]): v is PublishType => v !== "";
-const isCategory = (v: CampaignValues["category"]): v is CategoryId => v !== "";
+interface WalletInfo { available: number; deposited: number; committed: number; pendingDeposits: number }
 
-const EMPTY: CampaignValues = { title: "", business: "", description: "", link: "", budget: "", count: "", publishType: "", category: "", region: "", notes: "" };
-const FIELD_ORDER: CampaignField[] = ["title", "business", "description", "link", "media", "budget", "count", "publishType", "category", "notes"];
+const INITIAL = {
+  title: "", business: "", description: "", link: "", budget: "", pageCount: "1",
+  category: "", city: "", notes: "",
+};
 
-export function CampaignForm() {
-  const { addCampaign, pages } = useStore();
+const TYPES: { value: PublishType; label: string }[] = [
+  { value: "story", label: "استوری" },
+  { value: "post", label: "پست" },
+  { value: "reels", label: "ریلز" },
+];
+
+const MAX_UPLOAD = 3 * 1024 * 1024;
+
+export function CampaignForm({ initialPageId }: { initialPageId?: string }) {
+  const { user, openAuth } = useSession();
   const toast = useToast();
-  const [values, setValues] = useState<CampaignValues>(EMPTY);
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Errors<CampaignField>>({});
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ orderNumber: string; title: string } | null>(null);
-  // Preview-only selection: the advertiser sees the tariff of the picked page, but no offer is created here.
-  const [picked, setPicked] = useState<InstaPage | null>(null);
+  const [values, setValues] = useState(INITIAL);
+  const [types, setTypes] = useState<PublishType[]>(["post"]);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [mediaError, setMediaError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [wallet, setWallet] = useState<WalletInfo | null>(null);
+  const [errors, setErrors] = useState<CampaignErrors & { pageCount?: string }>({});
+  const [serverError, setServerError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ orderNumber: string; created: number; message: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!file) { setPreviewUrl(null); return; }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-
-  const set = <K extends keyof CampaignValues>(k: K, v: CampaignValues[K]) => {
-    setValues((p) => ({ ...p, [k]: v }));
-    setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
-  };
-  const check = (k: CampaignField) => () => setErrors((e) => ({ ...e, [k]: validateCampaign(values, file)[k] }));
-
-  function onFile(e: ChangeEvent<HTMLInputElement>) {
-    const picked = e.target.files?.[0] ?? null;
-    e.target.value = "";
-    if (!picked) return;
-    const problem = validateMedia(picked);
-    setErrors((p) => ({ ...p, media: problem }));
-    setFile(problem ? null : picked);
-    if (problem) toast({ tone: "error", title: "فایل پذیرفته نشد", description: problem });
-  }
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    const found = validateCampaign(values, file);
-    setErrors(found);
-    const first = FIELD_ORDER.find((k) => found[k]);
-    if (first) {
-      toast({ tone: "error", title: "فرم نیاز به اصلاح دارد", description: "فیلدهای مشخص‌شده را بررسی کنید." });
-      document.getElementById(first === "publishType" ? "publishType-story" : first)?.focus();
-      return;
-    }
-    // The validation above already rejects empty values; this keeps the narrowing explicit for TypeScript.
-    if (!isPublishType(values.publishType) || !isCategory(values.category)) return;
-    const publishType = values.publishType;
-    const category = values.category;
-    setSubmitting(true);
-    // Demo only: no network request is made, and the uploaded file is never stored.
-    await new Promise((r) => setTimeout(r, 700));
-    const orderNumber = `PK-${Math.floor(100000 + Math.random() * 900000)}`;
-    addCampaign({
-      id: makeId("c"), orderNumber, title: values.title.trim(), business: values.business.trim(), description: values.description.trim(),
-      link: toLatinDigits(values.link.trim()), mediaName: file?.name ?? null, mediaKind: file?.type.startsWith("video") ? "video" : "image",
-      budget: parseAmount(values.budget), count: Number(toLatinDigits(values.count)), publishType,
-      category, region: values.region.trim(), notes: values.notes.trim(), status: "pending",
-      createdAt: new Date().toISOString(), mine: true, assignments: [], selectedPageId: picked?.id ?? null,
-    });
-    setSubmitting(false);
-    setDone({ orderNumber, title: values.title.trim() });
-    toast({ tone: "success", title: "سفارش ثبت شد", description: `شمارهٔ نمونه: ${orderNumber}` });
-  }
-
-  function startOver() { setValues(EMPTY); setFile(null); setErrors({}); setDone(null); setPicked(null); }
-
-  /** Picking a page (optionally with a publish type) only pre-fills the form; the order is placed on submit. */
-  function choosePage(page: InstaPage | null, type?: PublishType) {
-    setPicked(page);
-    if (!page) return;
-    setValues((p) => ({
-      ...p,
-      category: page.category ?? p.category,
-      region: p.region || page.city,
-      publishType: type ?? p.publishType,
-    }));
-    setErrors((e) => ({ ...e, category: undefined, publishType: undefined }));
-  }
-
-  if (done) return <OrderSuccess orderNumber={done.orderNumber} title={done.title} onNew={startOver} />;
+    if (!user) { setWallet(null); return; }
+    let alive = true;
+    fetch("/api/wallet", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { summary?: WalletInfo } | null) => { if (alive) setWallet(data?.summary ?? null); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [user]);
 
   const budget = parseAmount(values.budget);
-  const count = Number(toLatinDigits(values.count));
-  const perPublish = budget > 0 && Number.isInteger(count) && count > 0 ? Math.round(budget / count) : 0;
-  const errorCount = Object.values(errors).filter(Boolean).length;
+  const notEnough = wallet !== null && budget > 0 && wallet.available < budget;
+
+  function set<K extends keyof typeof INITIAL>(key: K, value: string) {
+    setValues((v) => ({ ...v, [key]: value }));
+    setErrors((e) => ({ ...e, [key]: undefined }));
+  }
+
+  function toggleType(t: PublishType) {
+    setTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]);
+    setErrors((e) => ({ ...e, publishTypes: undefined }));
+  }
+
+  async function onFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setMediaError("");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setMediaError("فقط تصویر PNG، JPEG یا WebP مجاز است.");
+      return;
+    }
+    if (file.size > MAX_UPLOAD) {
+      setMediaError(`حجم تصویر باید کمتر از ${formatBytes(MAX_UPLOAD)} باشد.`);
+      return;
+    }
+    setUploading(true);
+    try {
+      const res = await fetch("/api/uploads?kind=creative", { method: "POST", body: file });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "آپلود ناموفق بود.");
+      setMediaUrl(data.url as string);
+    } catch (err) {
+      setMediaError(err instanceof Error ? err.message : "آپلود ناموفق بود.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (!user) { openAuth("login"); return; }
+
+    const pageCount = Number(values.pageCount);
+    const parsed = parseCampaignInput({
+      ...values,
+      budget: values.budget,
+      publishTypes: types,
+      category: values.category || null,
+      mediaUrl,
+    });
+    const nextErrors: CampaignErrors & { pageCount?: string } = parsed.ok ? {} : parsed.errors;
+    if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 100) {
+      nextErrors.pageCount = "تعداد پیج باید بین ۱ تا ۱۰۰ باشد.";
+    }
+    setErrors(nextErrors);
+    setServerError("");
+    if (Object.keys(nextErrors).length > 0) return;
+
+    if (!parsed.ok) return;
+    if (wallet !== null && wallet.available < parsed.data.budget) {
+      setServerError("موجودی آزاد کیف پول برای این بودجه کافی نیست. ابتدا واریز کنید و منتظر تأیید مدیر بمانید.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await fetch("/api/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...parsed.data,
+          pageCount,
+          targetPageId: initialPageId ?? undefined,
+          targetPublishType: initialPageId ? types[0] : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) openAuth("login");
+        setServerError(typeof data.error === "string" ? data.error : "ثبت کمپین ناموفق بود.");
+        if (data.fields) setErrors(data.fields as CampaignErrors);
+        return;
+      }
+      setDone({
+        orderNumber: data.campaign?.orderNumber ?? "—",
+        created: data.dispatch?.created ?? 0,
+        message: typeof data.message === "string" ? data.message : "کمپین ثبت شد.",
+      });
+      setValues(INITIAL);
+      setTypes(["post"]);
+      setMediaUrl(null);
+      const walletRes = await fetch("/api/wallet", { cache: "no-store" });
+      if (walletRes.ok) {
+        const w = await walletRes.json();
+        setWallet(w.summary ?? null);
+      }
+      toast({ tone: "success", title: "کمپین ثبت شد", description: "درخواست‌ها به صاحبان پیج ارسال شد." });
+    } catch {
+      setServerError("ارتباط با سرور برقرار نشد.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <Card className="mx-auto max-w-xl space-y-5 p-8 text-center" role="status">
+        <span className="mx-auto grid size-16 place-items-center rounded-full bg-emerald-50 text-emerald-600"><CheckCircle2 className="size-9" /></span>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-extrabold text-navy-900">کمپین ثبت شد</h2>
+          <p className="leading-8 text-slate-600">{done.message}</p>
+        </div>
+        <div className="rounded-xl bg-mist p-4">
+          <p className="text-sm text-slate-500">شمارهٔ کمپین</p>
+          <p dir="ltr" className="text-2xl font-extrabold tracking-wide text-brand-700">{done.orderNumber}</p>
+          <p className="mt-2 text-sm text-slate-600">{formatNumber(done.created)} درخواست ارسال شد.</p>
+        </div>
+        <div className="flex flex-col justify-center gap-2 sm:flex-row">
+          <Link href="/wallet" className={buttonVariants({ variant: "outline" })}><Wallet className="size-4" /> کیف پول و بلوکه‌ها</Link>
+          <Button onClick={() => setDone(null)}>ثبت کمپین دیگر</Button>
+        </div>
+      </Card>
+    );
+  }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="grid items-start gap-6 lg:grid-cols-[1fr_22rem]">
-      <div className="space-y-6">
-        <Card>
-          <CardHeader><CardTitle>اطلاعات تبلیغ</CardTitle></CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <Field id="title" label="عنوان تبلیغ یا نام محصول" required error={errors.title}>
-              <Input {...describe("title", errors.title)} value={values.title} onChange={(e) => set("title", e.target.value)} onBlur={check("title")} />
-            </Field>
-            <Field id="business" label="نام کسب‌وکار" required error={errors.business}>
-              <Input {...describe("business", errors.business)} autoComplete="organization" value={values.business} onChange={(e) => set("business", e.target.value)} onBlur={check("business")} />
-            </Field>
-            <div className="sm:col-span-2">
-              <Field id="description" label="توضیحات محصول یا خدمات" required error={errors.description}>
-                <Textarea {...describe("description", errors.description)} value={values.description} onChange={(e) => set("description", e.target.value)} onBlur={check("description")} />
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <Card>
+        <CardHeader>
+          <CardTitle>اطلاعات تبلیغ</CardTitle>
+          <p className="text-sm leading-6 text-slate-500">نام کسب‌وکار و لینک شما تا پذیرش درخواست برای صاحب پیج مخفی می‌ماند.</p>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submit} noValidate className="space-y-4">
+            {serverError && <Alert tone="warning">{serverError}</Alert>}
+            {notEnough && (
+              <Alert tone="warning">
+                موجودی آزاد شما {formatToman(wallet?.available ?? 0)} است و برای این بودجه کافی نیست.{" "}
+                <Link href="/wallet" className="font-bold underline">شارژ کیف پول</Link>
+              </Alert>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="title" label="عنوان تبلیغ" required error={errors.title}>
+                <Input {...describe("title", errors.title)} value={values.title} onChange={(e) => set("title", e.target.value)} placeholder="مثلاً کلکسیون پاییزه" maxLength={CAMPAIGN_LIMITS.maxTitle} />
+              </Field>
+              <Field id="business" label="نام کسب‌وکار" required error={errors.business}>
+                <Input {...describe("business", errors.business)} value={values.business} onChange={(e) => set("business", e.target.value)} placeholder="مثلاً مزون آرمان" maxLength={CAMPAIGN_LIMITS.maxBusiness} />
               </Field>
             </div>
-            <div className="sm:col-span-2">
-              <Field id="link" label="لینک پیج اینستاگرام یا سایت" required hint="نمونه: https://example.com یا @username" error={errors.link}>
-                <Input {...describe("link", errors.link, true)} dir="ltr" className="text-start" inputMode="url" autoComplete="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="https://" value={values.link} onChange={(e) => set("link", e.target.value)} onBlur={check("link")} />
+
+            <Field id="description" label="توضیحات تبلیغ" required error={errors.description} hint="در متن تبلیغ شماره تماس یا آیدی ننویسید؛ هویت پس از پذیرش آشکار می‌شود.">
+              <Textarea {...describe("description", errors.description, true)} value={values.description} onChange={(e) => set("description", e.target.value)} placeholder="محصول یا خدمت، مخاطب و نکته‌های مهم…" maxLength={CAMPAIGN_LIMITS.maxDescription} />
+            </Field>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="link" label="لینک مقصد" required error={errors.link} hint="آدرس سایت یا آیدی اینستاگرام مقصد.">
+                <Input {...describe("link", errors.link, true)} dir="ltr" className="text-start" value={values.link} onChange={(e) => set("link", e.target.value)} placeholder="https://example.com" />
+              </Field>
+              <Field id="budget" label="بودجهٔ کل (تومان)" required error={errors.budget} hint={`حداقل ${formatToman(CAMPAIGN_LIMITS.minBudget)}`}>
+                <Input {...describe("budget", errors.budget, true)} inputMode="numeric" value={values.budget} onChange={(e) => set("budget", e.target.value)} placeholder="5,000,000" />
               </Field>
             </div>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader><CardTitle>تصویر یا ویدئوی تبلیغ</CardTitle></CardHeader>
-          <CardContent>
-            <Field id="media" label="فایل تبلیغ" required hint={`JPG، PNG، WebP یا MP4 · حداکثر ${formatNumber(MAX_FILE_MB)} مگابایت`} error={errors.media}>
-              <div className="flex flex-wrap items-center gap-3">
-                <input id="media" name="media" type="file" accept={ACCEPTED_MEDIA.join(",")} onChange={onFile} className="peer sr-only" aria-invalid={errors.media ? true : undefined} aria-describedby={errors.media ? "media-error" : "media-hint"} />
-                <label htmlFor="media" className={cn("inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl border border-dashed bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 peer-focus-visible:ring-4 peer-focus-visible:ring-brand-100", errors.media ? "border-red-500" : "border-slate-300")}>
-                  <Paperclip aria-hidden className="size-4" />{file ? "تغییر فایل" : "انتخاب تصویر یا ویدئو"}
-                </label>
-                {file && (
-                  <span className="inline-flex items-center gap-2 rounded-xl bg-mist px-3 py-2 text-sm text-slate-700">
-                    <span dir="ltr" className="max-w-40 truncate">{file.name}</span>
-                    <span className="text-xs text-slate-500">{formatBytes(file.size)}</span>
-                    <button type="button" onClick={() => setFile(null)} aria-label="حذف فایل" className="grid size-7 place-items-center rounded-md text-slate-500 hover:bg-white"><X className="size-4" /></button>
-                  </span>
-                )}
-              </div>
-            </Field>
-          </CardContent>
-        </Card>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="pageCount" label="حداکثر تعداد پیج" required error={errors.pageCount}>
+                <Input {...describe("pageCount", errors.pageCount)} inputMode="numeric" value={values.pageCount} onChange={(e) => set("pageCount", e.target.value)} />
+              </Field>
+              <Field id="category" label="دسته‌بندی" error={errors.category} hint="خالی بگذارید تا همهٔ دسته‌ها پیشنهاد بگیرند.">
+                <Select id="category" value={values.category} onValueChange={(v) => set("category", v)} placeholder="همهٔ دسته‌ها">
+                  <option value="">همهٔ دسته‌ها</option>
+                  {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </Select>
+              </Field>
+            </div>
 
-        <Card>
-          <CardHeader><CardTitle>بودجه و نوع انتشار</CardTitle></CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <Field id="budget" label="بودجهٔ کل (تومان)" required error={errors.budget} hint={budget > 0 ? formatToman(budget) : "حداقل ۵۰۰٬۰۰۰ تومان"}>
-              <Input {...describe("budget", errors.budget, true)} dir="ltr" className="text-start" inputMode="numeric" autoComplete="off" value={values.budget}
-                onChange={(e) => { const n = parseAmount(e.target.value); set("budget", n ? formatNumber(n) : ""); }} onBlur={check("budget")} />
-            </Field>
-            <Field id="count" label="تعداد انتشار موردنیاز" required error={errors.count} hint={perPublish ? `میانگین هر انتشار: ${formatToman(perPublish)}` : "عددی بین ۱ تا ۱۰۰"}>
-              <Input {...describe("count", errors.count, true)} dir="ltr" className="text-start" inputMode="numeric" autoComplete="off" value={values.count} onChange={(e) => set("count", e.target.value)} onBlur={check("count")} />
-            </Field>
-            <fieldset className="sm:col-span-2" aria-describedby={errors.publishType ? "publishType-error" : undefined}>
-              <legend className="mb-1.5 text-sm font-medium text-slate-800">نوع انتشار<span aria-hidden className="ms-1 text-red-600">*</span></legend>
-              <div className="grid grid-cols-3 gap-2">
-                {PUBLISH_TYPES.map((t) => (
-                  <label key={t.value} className={cn("flex h-12 cursor-pointer items-center justify-center rounded-xl border text-sm font-medium transition-colors has-[:checked]:border-brand-600 has-[:checked]:bg-brand-50 has-[:checked]:text-brand-700 has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-brand-100", errors.publishType ? "border-red-500" : "border-slate-200 hover:border-slate-300")}>
-                    <input id={`publishType-${t.value}`} type="radio" name="publishType" value={t.value} checked={values.publishType === t.value} onChange={() => set("publishType", t.value)} className="sr-only" />
+            <Field id="publishTypes" label="نوع انتشار" required error={errors.publishTypes}>
+              <div className="flex flex-wrap gap-2">
+                {TYPES.map((t) => (
+                  <button key={t.value} type="button" onClick={() => toggleType(t.value)} aria-pressed={types.includes(t.value)}
+                    className={cn("rounded-xl border px-4 py-2 text-sm font-medium transition-colors",
+                      types.includes(t.value) ? "border-brand-600 bg-brand-50 text-brand-700 ring-2 ring-brand-100" : "border-slate-200 text-slate-600 hover:border-slate-300")}>
                     {t.label}
-                  </label>
+                  </button>
                 ))}
               </div>
-              {errors.publishType && <p id="publishType-error" role="alert" className="mt-1.5 text-xs text-red-600">{errors.publishType}</p>}
-            </fieldset>
-            <Field id="category" label="دسته‌بندی پیج‌های موردنظر" required error={errors.category}>
-              <Select {...describe("category", errors.category)} value={values.category} onChange={(e) => set("category", e.target.value as CampaignValues["category"])} onBlur={check("category")}>
-                <option value="">انتخاب کنید</option>
-                {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </Select>
             </Field>
-            <Field id="region" label="محدودهٔ جغرافیایی" hint="مثلاً تهران یا کل کشور">
-              <Input {...describe("region", undefined, true)} value={values.region} onChange={(e) => set("region", e.target.value)} />
-            </Field>
-            <div className="sm:col-span-2">
-              <Field id="notes" label="توضیحات تکمیلی" error={errors.notes}>
-                <Textarea {...describe("notes", errors.notes)} className="min-h-24" value={values.notes} onChange={(e) => set("notes", e.target.value)} onBlur={check("notes")} />
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="city" label="شهر" error={errors.city}>
+                <Input {...describe("city", errors.city)} value={values.city} onChange={(e) => set("city", e.target.value)} placeholder="تهران" maxLength={CAMPAIGN_LIMITS.maxCity} />
+              </Field>
+              <Field id="mediaUrl" label="تصویر تبلیغ" error={mediaError || errors.mediaUrl} hint="حداکثر ۳ مگابایت؛ PNG/JPEG/WebP.">
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => void onFile(e)} />
+                {mediaUrl ? (
+                  <div className="flex items-center gap-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- local upload preview */}
+                    <img src={mediaUrl} alt="پیش‌نمایش تبلیغ" className="size-14 rounded-lg object-cover" />
+                    <Button type="button" variant="outline" size="sm" onClick={() => setMediaUrl(null)}><X className="size-4" /> حذف</Button>
+                  </div>
+                ) : (
+                  <Button type="button" variant="outline" className="w-full" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                    {uploading ? <Loader2 className="size-4 animate-spin" /> : <ImagePlus className="size-4" />} {uploading ? "در حال آپلود…" : "انتخاب تصویر"}
+                  </Button>
+                )}
               </Field>
             </div>
-          </CardContent>
-        </Card>
 
-        <PagePicker pages={pages} picked={picked} onPick={choosePage} />
+            <Field id="notes" label="یادداشت برای صاحب پیج" error={errors.notes}>
+              <Textarea {...describe("notes", errors.notes)} value={values.notes} onChange={(e) => set("notes", e.target.value)} placeholder="زمان دلخواه انتشار یا نکته‌های اجرایی…" maxLength={CAMPAIGN_LIMITS.maxNotes} className="min-h-20" />
+            </Field>
 
-        {errorCount > 0 && <Alert tone="warning"><span role="alert">{formatNumber(errorCount)} مورد نیاز به اصلاح دارد. فیلدهای قرمز را بررسی کنید.</span></Alert>}
-        <Alert tone="info">پرداخت واقعی انجام نمی‌شود؛ ثبت سفارش فقط یک نمونهٔ آزمایشی در همین مرورگر ذخیره می‌کند.</Alert>
-        <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={submitting}>
-          {submitting ? <><Loader2 className="animate-spin" />در حال ثبت…</> : <><Send className="-scale-x-100" />ثبت سفارش</>}
-        </Button>
-      </div>
+            {initialPageId && (
+              <Alert tone="info">پیجی که از بازار انتخاب کرده‌اید در اولویت توزیع قرار می‌گیرد؛ در صورت نبود شرایط، پیج‌های واجد شرایط دیگر انتخاب می‌شوند.</Alert>
+            )}
 
-      <aside aria-label="پیش‌نمایش تبلیغ" className="space-y-3 lg:sticky lg:top-24">
-        <h2 className="text-base font-bold text-navy-900">پیش‌نمایش تبلیغ</h2>
-        <CampaignPreview values={values} previewUrl={previewUrl} mediaKind={file ? (file.type.startsWith("video") ? "video" : "image") : null} pickedPage={picked} />
-      </aside>
-    </form>
-  );
-}
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+              <Button type="submit" size="lg" disabled={busy} className="gap-2">
+                {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} ثبت کمپین و بلوکه‌کردن بودجه
+              </Button>
+              <span className="text-xs leading-5 text-slate-500">۱۰٪ کمیسیون پلتفرم از مبلغ هر انتشار کسر می‌شود.</span>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
-/**
- * Optional step: pick one approved page to see its tariff next to the preview.
- * The selection is saved on the campaign as `selectedPageId` (preview only); the
- * admin still assigns the actual pages.
- */
-function PagePicker({ pages, picked, onPick }: {
-  pages: InstaPage[];
-  picked: InstaPage | null;
-  /** `null` clears the selection (and the pre-filled category/region are left as they are). */
-  onPick: (page: InstaPage | null, type?: PublishType) => void;
-}) {
-  const list = advertiserPages(pages);
-  const [open, setOpen] = useState<InstaPage | null>(null);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>انتخاب پیج پیشنهادی (اختیاری)</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm leading-7 text-slate-600">
-          می‌توانید یکی از پیج‌های تأییدشده را انتخاب کنید تا تعرفهٔ آن را ببینید. انتخاب پیج فقط پیشنهاد شماست و تخصیص نهایی پیج‌ها را مدیر انجام می‌دهد.
-        </p>
-
-        {picked ? (
-          <div className="space-y-3">
-            <PageCard page={picked} />
-            <div className="flex flex-wrap items-center gap-2">
-              {picked.publishTypes.map((t) => (
-                <Button key={t} type="button" variant="outline" size="sm" onClick={() => onPick(picked, t)}>
-                  {`${typeLabel(t)} · ${formatToman(pagePrice(picked, t))}`}
-                </Button>
-              ))}
-              <Button type="button" variant="ghost" size="sm" onClick={() => onPick(null)}>حذف انتخاب</Button>
+      <div className="space-y-4">
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-3 border-b border-slate-100 p-4">
+            <span className="grid size-10 place-items-center rounded-full bg-brand-600 font-bold text-white">{(values.business.trim()[0] ?? "؟")}</span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-navy-900">{values.business.trim() || "نام کسب‌وکار"}</p>
+              <p className="text-xs text-slate-500">پیش‌نمایش تبلیغ</p>
+            </div>
+            {types[0] && <Badge tone="info" className="ms-auto">{typeLabel(types[0])}</Badge>}
+          </div>
+          <div className="grid aspect-square place-items-center bg-mist">
+            {mediaUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- local upload preview
+              <img src={mediaUrl} alt="پیش‌نمایش" className="size-full object-cover" />
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-slate-400"><ImagePlus className="size-9" /><span className="text-xs">تصویر شما اینجا دیده می‌شود</span></div>
+            )}
+          </div>
+          <div className="space-y-2 p-4">
+            <p className={cn("font-bold", values.title.trim() ? "text-navy-900" : "text-slate-400")}>{values.title.trim() || "عنوان تبلیغ شما"}</p>
+            <p className="line-clamp-3 text-sm leading-7 text-slate-600">{values.description.trim() || "توضیحات محصول یا خدمت…"}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {values.category && <Badge>{categoryLabel(values.category as never)}</Badge>}
+              {values.city && <Badge>{values.city}</Badge>}
+              {budget > 0 && <Badge tone="success">{formatToman(budget)}</Badge>}
             </div>
           </div>
-        ) : list.length === 0 ? (
-          <Alert tone="info">در حال حاضر پیج تأییدشده‌ای برای نمایش نیست. ثبت سفارش با تنظیمات دسته‌بندی هم ممکن است.</Alert>
-        ) : (
-          <ul className="grid gap-3 sm:grid-cols-2">
-            {list.slice(0, 4).map((p) => (
-              <li key={p.id} className="h-full">
-                <PageCard page={p} onSelect={() => setOpen(p)} actionLabel="مشاهده و انتخاب این پیج" />
-              </li>
-            ))}
-            {list.length > 4 && (
-              <li className="sm:col-span-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setOpen(list[4])}>
-                  دیدن {formatNumber(list.length - 4)} پیج دیگر
-                </Button>
-              </li>
-            )}
-          </ul>
-        )}
-      </CardContent>
+        </Card>
 
-      <PageDetailDialog page={open} onClose={() => setOpen(null)} onSelect={(page, type) => { onPick(page, type); setOpen(null); }} />
-    </Card>
+        <Card className="space-y-3 p-4">
+          <p className="flex items-center gap-2 text-sm font-bold text-navy-900"><Wallet className="size-4 text-brand-600" /> کیف پول شما</p>
+          {!user ? (
+            <div className="space-y-2 text-sm text-slate-600">
+              <p>برای ثبت تبلیغ باید وارد حساب شوید.</p>
+              <Button size="sm" onClick={() => openAuth("login")}>ورود / ثبت‌نام</Button>
+            </div>
+          ) : wallet === null ? (
+            <p className="text-sm text-slate-500">در حال دریافت موجودی…</p>
+          ) : (
+            <>
+              <div className="flex justify-between text-sm"><span className="text-slate-500">موجودی آزاد</span><b className="text-navy-900">{formatToman(wallet.available)}</b></div>
+              <div className="flex justify-between text-sm"><span className="text-slate-500">بلوکه‌شده</span><span>{formatToman(wallet.committed)}</span></div>
+              {wallet.pendingDeposits > 0 && <div className="flex justify-between text-sm"><span className="text-slate-500">واریز در انتظار تأیید</span><span className="text-amber-700">{formatToman(wallet.pendingDeposits)}</span></div>}
+              <Link href="/wallet" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}>مدیریت کیف پول</Link>
+            </>
+          )}
+        </Card>
+      </div>
+    </div>
   );
 }

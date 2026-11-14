@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { CAMPAIGN_STATUS } from "@/lib/constants";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatNumber } from "@/lib/utils";
 import type { CampaignStatus } from "@/types";
 

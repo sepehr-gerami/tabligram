@@ -1,13 +1,14 @@
 "use client";
 
-import { Check, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { Check, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { categoryLabel } from "@/lib/categories";
 import { typeLabel } from "@/lib/constants";
 import { pagePrice } from "@/lib/pages";
-import { formatNumber, formatToman } from "@/lib/utils";
+import { cn, formatNumber, formatToman } from "@/lib/utils";
 import { PageAvatar, pageTitle, StatsSourceNote } from "@/components/shared/page-card";
 import type { InstaPage, PublishType } from "@/types";
 
@@ -41,9 +42,6 @@ export function PageDetailDialog({ page, onClose, onSelect }: {
               <Badge tone="neutral">{categoryLabel(page.category)}</Badge>
               {page.city && <Badge tone="neutral">{page.city}</Badge>}
               {page.publishTypes.map((t) => <Badge key={t} tone="info">{typeLabel(t)}</Badge>)}
-              <a href={page.url} target="_blank" rel="noopener noreferrer" className="ms-auto inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline">
-                صفحهٔ اینستاگرام<ExternalLink aria-hidden className="size-3.5" />
-              </a>
             </div>
 
             {page.bio && <p className="mt-4 leading-7 text-slate-700">{page.bio}</p>}
@@ -54,6 +52,21 @@ export function PageDetailDialog({ page, onClose, onSelect }: {
               <div><dt className="text-slate-500">میانگین بازدید پست/ریلز</dt><dd className="font-bold text-slate-800">{formatNumber(page.avgPostViews)}</dd></div>
             </dl>
             <StatsSourceNote className="mt-2" />
+
+            {!onSelect && (
+              <div className="mt-5 space-y-2 border-t border-slate-100 pt-4">
+                <Link
+                  href={`/campaigns/new?page=${encodeURIComponent(page.id)}`}
+                  className={cn(buttonVariants({ size: "lg" }), "w-full sm:w-auto")}
+                >
+                  <Send className="-scale-x-100" />
+                  ثبت تبلیغ برای این پیج
+                </Link>
+                <p className="text-xs leading-5 text-slate-500">
+                  با ثبت سفارش، درخواست تبلیغ شما برای بررسی به مدیر ارسال می‌شود.
+                </p>
+              </div>
+            )}
 
             {onSelect && (
               <section aria-labelledby="pick-title" className="mt-5 space-y-2">

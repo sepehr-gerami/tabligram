@@ -11,7 +11,7 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { CampaignDetailDialog } from "@/components/admin/campaign-detail-dialog";
 import { CAMPAIGN_STATUS, typeLabel } from "@/lib/constants";
 import { categoryLabel } from "@/lib/categories";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatNumber, formatToman, toLatinDigits } from "@/lib/utils";
 import type { CampaignStatus } from "@/types";
 

@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { Logo } from "@/components/layout/logo";
-import { ResetDemoButton } from "@/components/layout/reset-demo-button";
 
 const COLS = [
-  { title: "پخش‌چی", links: [{ href: "/", label: "صفحهٔ اصلی" }, { href: "/#how", label: "نحوهٔ کار" }, { href: "/#pages", label: "پیج‌های تبلیغاتی" }] },
+  { title: "تبلیگرام", links: [{ href: "/", label: "صفحهٔ اصلی" }, { href: "/#how", label: "نحوهٔ کار" }, { href: "/#pages", label: "پیج‌های تبلیغاتی" }] },
   // Only public panels are linked here. The management panel (/admin) is deliberately not listed:
   // it must be reached through authenticated, server-side access only.
-  { title: "پنل‌های نمایشی", links: [{ href: "/campaigns/new", label: "ثبت تبلیغ جدید" }, { href: "/publisher/dashboard", label: "پنل صاحبان پیج" }] },
+  { title: "پنل‌ها", links: [{ href: "/campaigns/new", label: "ثبت تبلیغ جدید" }, { href: "/publisher/dashboard", label: "پنل صاحبان پیج" }, { href: "/wallet", label: "کیف پول" }] },
 ];
 
 export function SiteFooter() {
@@ -28,8 +27,8 @@ export function SiteFooter() {
       </div>
       <div className="border-t border-white/10">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-5 text-xs leading-6 text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-          <p>نسخهٔ نمایشی: داده‌ها نمونه‌اند و پرداخت، ورود واقعی یا اتصال به اینستاگرام وجود ندارد.</p>
-          <ResetDemoButton />
+          <p>تبلیگرام؛ ثبت تبلیغ، بلوکه‌سازی بودجه، تأیید انتشار و تسویهٔ امن با صاحبان پیج.</p>
+          <p>پشتیبانی: از طریق حساب کاربری خود درخواست خود را ثبت کنید.</p>
         </div>
       </div>
     </footer>

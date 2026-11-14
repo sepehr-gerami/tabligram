@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   POLICY, activeHoldsTotal, addHours, affordableTypes, availableBalance, checkHoldRequest, computePayoutDueAt,
   depositDecision, nextStep, parseDepositInput,
@@ -363,5 +363,41 @@ describe("depositDecision", () => {
     expect(depositDecision("PENDING", "reject").ok).toBe(false);
     expect(depositDecision("VERIFIED", "verify").ok).toBe(false);
     expect(depositDecision("REJECTED", "verify").ok).toBe(false);
+  });
+});
+
+/* --------------------- fast-payout dev switch --------------------- */
+
+describe("TABLIGRAM_FAST_PAYOUT dev switch", () => {
+  const env = process.env as Record<string, string | undefined>;
+  const saved = { node: env.NODE_ENV, fast: env.TABLIGRAM_FAST_PAYOUT };
+  afterEach(() => {
+    env.NODE_ENV = saved.node;
+    if (saved.fast === undefined) delete env.TABLIGRAM_FAST_PAYOUT; else env.TABLIGRAM_FAST_PAYOUT = saved.fast;
+    vi.resetModules();
+  });
+
+  it("is off by default", async () => {
+    delete env.TABLIGRAM_FAST_PAYOUT;
+    vi.resetModules();
+    const m = await import("@/lib/money-rules");
+    expect(m.POLICY.minLiveHours).toEqual({ story: 24, post: 72, reels: 72 });
+    expect(m.POLICY.newOwner.extraDelayHours).toBe(72);
+  });
+  it("removes the payout delays outside production when set to 1", async () => {
+    env.NODE_ENV = "development";
+    env.TABLIGRAM_FAST_PAYOUT = "1";
+    vi.resetModules();
+    const m = await import("@/lib/money-rules");
+    expect(m.POLICY.minLiveHours).toEqual({ story: 0, post: 0, reels: 0 });
+    expect(m.POLICY.newOwner.extraDelayHours).toBe(0);
+  });
+  it("has no effect in production, even when set", async () => {
+    env.NODE_ENV = "production";
+    env.TABLIGRAM_FAST_PAYOUT = "1";
+    vi.resetModules();
+    const m = await import("@/lib/money-rules");
+    expect(m.POLICY.minLiveHours).toEqual({ story: 24, post: 72, reels: 72 });
+    expect(m.POLICY.newOwner.extraDelayHours).toBe(72);
   });
 });

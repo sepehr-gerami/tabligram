@@ -10,7 +10,7 @@ import { CATEGORIES } from "@/lib/categories";
 import { advertiserPages } from "@/lib/pages";
 import { PageCard } from "@/components/shared/page-card";
 import { PageDetailDialog } from "@/components/shared/page-detail-dialog";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { cn } from "@/lib/utils";
 import type { CategoryId, InstaPage } from "@/types";
 import { CategoryFilter } from "@/components/shared/category-filter";

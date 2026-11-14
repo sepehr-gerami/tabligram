@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { CAMPAIGN_STATUS, PUBLISH_STATUS, typeLabel } from "@/lib/constants";
 import { categoryLabel } from "@/lib/categories";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { formatDate, formatNumber, formatToman, isHttpUrl, ltr } from "@/lib/utils";
 import { priceSummary } from "@/lib/pages";
 import type { Assignment, CampaignStatus, EscrowInfo, EscrowStatus, InstaPage, PublishStatus } from "@/types";

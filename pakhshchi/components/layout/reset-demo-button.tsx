@@ -1,7 +1,7 @@
 "use client";
 
 import { RotateCcw } from "lucide-react";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { useToast } from "@/components/ui/toast";
 
 export function ResetDemoButton() {

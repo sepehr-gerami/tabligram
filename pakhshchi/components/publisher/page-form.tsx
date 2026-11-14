@@ -13,7 +13,7 @@ import { CATEGORIES } from "@/lib/categories";
 import { ACCEPTED_IMAGES, MAX_AVATAR_MB, MAX_PAGES_PER_OWNER, PUBLISH_TYPES } from "@/lib/constants";
 import { DEMO_USER_ID } from "@/lib/identity";
 import { ownedPages } from "@/lib/pages";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 import { cn, formatNumber, formatToman, makeId, normalizeHandle, parseAmount, toLatinDigits } from "@/lib/utils";
 import { validateAvatar, validatePage, type Errors, type PageField, type PageValues } from "@/lib/validation";
 import { emptyVerification } from "@/lib/verification";

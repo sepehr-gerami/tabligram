@@ -3,7 +3,7 @@
 import { ClipboardCheck, Layers, Megaphone, PlayCircle } from "lucide-react";
 import { ReadyGate } from "@/components/shared/ready-gate";
 import { StatCard } from "@/components/shared/stat-card";
-import { useStore } from "@/lib/store";
+import { useStore } from "@/components/shared/store";
 
 export function AdminStats() {
   const { campaigns, pages } = useStore();

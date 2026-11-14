@@ -12,7 +12,7 @@ export function Benefits() {
   return (
     <section className="bg-mist">
       <div className="mx-auto max-w-7xl space-y-10 px-4 py-16">
-        <SectionHeading title="چرا پخش‌چی؟" description="هدف این است که ثبت و پیگیری تبلیغ اینستاگرامی از چند گفت‌وگوی پراکنده به یک مسیر روشن تبدیل شود." />
+        <SectionHeading title="چرا تبلیگرام؟" description="هدف این است که ثبت و پیگیری تبلیغ اینستاگرامی از چند گفت‌وگوی پراکنده به یک مسیر روشن تبدیل شود." />
         <dl className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
           {ITEMS.map(({ icon: Icon, title, text }) => (
             <div key={title} className="flex gap-4 border-t border-slate-200 pt-6">

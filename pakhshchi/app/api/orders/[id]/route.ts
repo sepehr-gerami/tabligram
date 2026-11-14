@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { HttpError, requireUser } from "@/lib/auth";
 import { withErrors } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
+import { toOrderView } from "@/lib/public-dto";
+
+export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(req: Request, { params }: Ctx) {
+/** جزئیات سفارش برای تبلیغ‌دهنده، صاحب پیج یا مدیر؛ هویت طرفین تا پذیرش مخفی است. */
+export async function GET(_req: Request, { params }: Ctx) {
   return withErrors(async () => {
-    const user = await requireAuth();
+    const user = await requireUser();
     const { id } = await params;
 
     const order = await prisma.order.findUnique({
@@ -15,67 +19,33 @@ export async function GET(req: Request, { params }: Ctx) {
       include: {
         campaign: {
           select: {
-            advertiserId: true,
-            title: true,
-            description: true,
-            business: true, // نام کسب‌وکار
-            link: true,     // لینک تبلیغ
-            mediaUrl: true,
-            mediaKind: true,
-          }
+            id: true, advertiserId: true, title: true, description: true, business: true, link: true,
+            mediaUrl: true, mediaKind: true, orderNumber: true,
+          },
         },
         page: {
           select: {
-            ownerId: true,
-            title: true,
-            handle: true,   // آیدی اینستاگرام
-            category: true,
-            avgStoryViews: true,
-            avgPostViews: true,
-            avgReelsViews: true,
-          }
+            id: true, ownerId: true, title: true, handle: true, category: true, avatarUrl: true,
+            followers: true, avgStoryViews: true, avgPostViews: true, avgReelsViews: true,
+          },
         },
         hold: true,
-      }
+        proofs: { select: { kind: true, proofUrl: true, caption: true, createdAt: true } },
+      },
     });
+    if (!order) return NextResponse.json({ error: "سفارش پیدا نشد." }, { status: 404 });
 
-    if (!order) return NextResponse.json({ error: "سفارش یافت نشد." }, { status: 404 });
-
-    // بررسی دسترسی (فقط تبلیغ‌دهنده، صاحب پیج یا ادمین)
     const isAdvertiser = order.campaign.advertiserId === user.id;
     const isOwner = order.page.ownerId === user.id;
-    const isAdmin = user.role === "ADMIN";
+    if (!isAdvertiser && !isOwner && !user.isAdmin) throw new HttpError(403, "به این سفارش دسترسی ندارید.");
 
-    if (!isAdvertiser && !isOwner && !isAdmin) {
-      return NextResponse.json({ error: "دسترسی غیرمجاز." }, { status: 403 });
-    }
-
-    // قانون مخفی ماندن هویت‌ها
-    const isRevealed = order.revealedAt !== null || isAdmin;
-
-    const responseData = {
-      id: order.id,
-      status: order.status,
-      amount: order.amount,
-      publishType: order.publishType,
-      createdAt: order.createdAt,
-      publishDeadlineAt: order.publishDeadlineAt,
-      campaign: {
-        title: order.campaign.title,
-        description: order.campaign.description,
-        mediaUrl: order.campaign.mediaUrl,
-        mediaKind: order.campaign.mediaKind,
-        business: isRevealed ? order.campaign.business : "***",
-        link: isRevealed ? order.campaign.link : "***",
-      },
-      page: {
-        title: order.page.title,
-        category: order.page.category,
-        handle: isRevealed ? order.page.handle : "***",
-      },
-      isRevealed
-    };
-
-    return NextResponse.json(responseData);
+    const view = toOrderView(order, { isAdmin: user.isAdmin, isAdvertiser, isOwner });
+    return NextResponse.json(
+      { ...view, viewer: isAdvertiser ? "ADVERTISER" : isOwner ? "OWNER" : "ADMIN", orderNumber: order.campaign.orderNumber, pageStats: {
+        followers: order.page.followers, avgStoryViews: order.page.avgStoryViews,
+        avgPostViews: order.page.avgPostViews, avgReelsViews: order.page.avgReelsViews,
+      } },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   });
 }

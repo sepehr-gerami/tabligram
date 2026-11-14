@@ -1,32 +1,39 @@
 import type { Metadata } from "next";
-import { Inbox, Layers, LayoutDashboard, PlusCircle } from "lucide-react";
+import { Inbox, Layers, LayoutDashboard, PlusCircle, Wallet } from "lucide-react";
 import { PanelShell } from "@/components/layout/panel-shell";
-import { Section } from "@/components/shared/section";
-import { SummaryCards } from "@/components/publisher/summary-cards";
-import { PageForm } from "@/components/publisher/page-form";
-import { PageList } from "@/components/publisher/page-list";
-import { OfferList } from "@/components/publisher/offer-list";
-import { PricingAdvisor } from "@/components/publisher/pricing-advisor";
+import { AuthRequired } from "@/components/auth/require-auth";
+import { PublisherDashboard } from "@/components/publisher/publisher-dashboard";
+import { getCurrentUser } from "@/lib/auth";
 
 export const metadata: Metadata = { title: "پنل صاحبان پیج" };
 
 const NAV = [
   { href: "#summary", label: "خلاصه", icon: LayoutDashboard },
-  { href: "#register", label: "ثبت پیج", icon: PlusCircle },
+  { href: "#register", label: "ثبت / ویرایش پیج", icon: PlusCircle },
   { href: "#my-pages", label: "پیج‌های من", icon: Layers },
-  { href: "#pricing", label: "قیمت‌گذاری هوشمند", icon: Layers },
-  { href: "#offers", label: "پیشنهادها", icon: Inbox },
+  { href: "#offers", label: "درخواست‌های تبلیغ", icon: Inbox },
+  { href: "#payout", label: "اطلاعات پرداخت", icon: Wallet },
 ];
 
-export default function PublisherDashboardPage() {
+export default async function PublisherDashboardPage() {
+  // کنترل دسترسی سمت سرور: داده‌های پیج و درآمد فقط برای کاربر واردشده رندر می‌شود.
+  const user = await getCurrentUser();
+
   return (
-    <PanelShell title="پنل صاحبان پیج" description="پیج اینستاگرام خود را ثبت کنید و پیشنهادهای تبلیغاتی را بپذیرید یا رد کنید."
-      notice="نقش «صاحب پیج» نمایشی است و ورود واقعی وجود ندارد. داده‌ها فقط در همین مرورگر ذخیره می‌شوند و آمار واردشده توسط صاحب پیج تأیید اینستاگرام نیست." nav={NAV}>
-      <Section id="summary" title="خلاصه"><SummaryCards /></Section>
-      <Section id="register" title="ثبت پیج اینستاگرام" description="بعد از ثبت، پیج در وضعیت «در انتظار تأیید» قرار می‌گیرد تا مدیر آن را بررسی کند. هر حساب حداکثر ۵ پیج می‌تواند ثبت کند."><PageForm /></Section>
-      <Section id="my-pages" title="پیج‌های من"><PageList /></Section>
-      <Section id="pricing" title="قیمت‌گذاری هوشمند" description="پیشنهاد قیمت بر پایهٔ CPM و بسته‌های تخفیف‌دار برای پیج‌های کوچک."><PricingAdvisor /></Section>
-      <Section id="offers" title="پیشنهادهای تبلیغاتی"><OfferList /></Section>
+    <PanelShell
+      title="پنل صاحبان پیج"
+      description="پیج اینستاگرام خود را ثبت کنید، تعرفه‌ها را تعیین کنید و درخواست‌های تبلیغاتی را بپذیرید یا رد کنید."
+      notice="پیج‌ها پس از تأیید مدیر در بازار نمایش داده می‌شوند. مبلغ سفارش از کیف پول تبلیغ‌دهنده بلوکه می‌شود و ۱۰٪ کمیسیون پلتفرم از آن کسر می‌گردد."
+      nav={NAV}
+    >
+      {user ? (
+        <PublisherDashboard />
+      ) : (
+        <AuthRequired
+          title="برای ورود به پنل صاحب پیج وارد شوید"
+          description="ثبت پیج و دریافت پیشنهاد تبلیغ نیازمند حساب واقعی است. وارد شوید یا ثبت‌نام کنید."
+        />
+      )}
     </PanelShell>
   );
 }
